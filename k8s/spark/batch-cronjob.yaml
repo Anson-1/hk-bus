@@ -14,11 +14,11 @@ spec:
             - name: spark-batch
               image: kmb-spark:latest
               imagePullPolicy: IfNotPresent
-              command: ["/opt/bitnami/spark/bin/spark-submit"]
+              command: ["/opt/spark/bin/spark-submit"]
               args:
                 - "--master=local[2]"
                 - "--packages=org.postgresql:postgresql:42.7.1"
-                - "/opt/bitnami/spark/jobs/batch_job.py"
+                - "/opt/spark/jobs/batch_job.py"
               env:
                 - name: POSTGRES_HOST
                   value: "postgres.hk-bus.svc.cluster.local"

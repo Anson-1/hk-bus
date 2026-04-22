@@ -1,9 +1,10 @@
-FROM bitnami/spark:3.5
+FROM apache/spark-py:3.5.0
 
 USER root
 RUN pip install psycopg2-binary python-dateutil kafka-python
 
-COPY streaming_job.py /opt/bitnami/spark/jobs/
-COPY batch_job.py /opt/bitnami/spark/jobs/
+RUN mkdir -p /opt/spark/jobs
+COPY streaming_job.py /opt/spark/jobs/
+COPY batch_job.py /opt/spark/jobs/
 
-USER 1001
+USER 185
