@@ -1,0 +1,60 @@
+{
+  "uid": "hkbus-infra",
+  "title": "Infrastructure Dashboard (Serverless Demo)",
+  "schemaVersion": 38,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "kmb-fetcher Pod Count — Scale to Zero",
+      "description": "Watch this oscillate 0 → 1 → 0 every minute — this is serverless autoscaling",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 20 },
+          "color": { "fixedColor": "blue", "mode": "fixed" }
+        }
+      },
+      "targets": [{
+        "expr": "kube_deployment_status_replicas_available{namespace='openfaas-fn', deployment=~'kmb-fetcher.*'}",
+        "legendFormat": "kmb-fetcher replicas"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Kafka Messages/sec (kmb-eta-raw)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "rate(kafka_server_brokertopicmetrics_messagesin_total{topic='kmb-eta-raw'}[1m])",
+        "legendFormat": "messages/sec"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Pod CPU Usage — hk-bus namespace",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total{namespace='hk-bus', container!=''}[2m])) by (pod)",
+        "legendFormat": "{{ pod }}"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Pod Memory Usage — hk-bus namespace",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": "Prometheus",
+      "targets": [{
+        "expr": "sum(container_memory_working_set_bytes{namespace='hk-bus', container!=''}) by (pod)",
+        "legendFormat": "{{ pod }}"
+      }]
+    }
+  ]
+}

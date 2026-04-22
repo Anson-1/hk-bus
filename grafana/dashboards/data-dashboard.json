@@ -1,0 +1,60 @@
+{
+  "uid": "hkbus-data",
+  "title": "KMB Bus Data Dashboard",
+  "schemaVersion": 38,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Average Wait Time by Route (Current Window)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT route || ' ' || dir AS route, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec FROM eta_realtime WHERE window_start = (SELECT MAX(window_start) FROM eta_realtime) ORDER BY avg_wait_sec DESC",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Delayed Routes Right Now (wait > 10 min)",
+      "type": "table",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": "PostgreSQL",
+      "options": { "cellHeight": "sm" },
+      "fieldConfig": {
+        "overrides": [{
+          "matcher": { "id": "byName", "options": "avg_wait_sec" },
+          "properties": [{
+            "id": "custom.displayMode",
+            "value": "color-background"
+          }, {
+            "id": "thresholds",
+            "value": {
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 600 }
+              ]
+            }
+          }]
+        }]
+      },
+      "targets": [{
+        "rawSql": "SELECT route, dir, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec, sample_count FROM eta_realtime WHERE delay_flag = true AND window_start >= NOW() - INTERVAL '2 minutes' ORDER BY avg_wait_sec DESC",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Wait Time Trend — Last 30 Minutes",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT window_start AS time, route || ' ' || dir AS metric, avg_wait_sec AS value FROM eta_realtime WHERE window_start >= NOW() - INTERVAL '30 minutes' ORDER BY window_start",
+        "format": "time_series"
+      }]
+    }
+  ]
+}

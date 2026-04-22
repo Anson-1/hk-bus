@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: hk-bus
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: hk-bus
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "hkbus"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init-sql
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: hk-bus
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS eta_raw (
+        id             SERIAL PRIMARY KEY,
+        co             VARCHAR(10),
+        route          VARCHAR(10)   NOT NULL,
+        dir            CHAR(1)       NOT NULL,
+        stop           VARCHAR(64)   NOT NULL,
+        eta_seq        INT,
+        eta            TIMESTAMPTZ,
+        rmk_en         TEXT,
+        data_timestamp TIMESTAMPTZ,
+        fetched_at     TIMESTAMPTZ   NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_eta_raw_route ON eta_raw (route, dir);
+    CREATE INDEX IF NOT EXISTS idx_eta_raw_fetched ON eta_raw (fetched_at);
+    CREATE TABLE IF NOT EXISTS eta_realtime (
+        route         VARCHAR(10)   NOT NULL,
+        dir           CHAR(1)       NOT NULL,
+        window_start  TIMESTAMPTZ   NOT NULL,
+        avg_wait_sec  FLOAT,
+        delay_flag    BOOLEAN,
+        sample_count  INT,
+        PRIMARY KEY (route, dir, window_start)
+    );
+    CREATE TABLE IF NOT EXISTS eta_analytics (
+        route         VARCHAR(10)   NOT NULL,
+        hour_of_day   INT           NOT NULL,
+        day_of_week   INT           NOT NULL,
+        avg_wait_sec  FLOAT,
+        p95_wait_sec  FLOAT,
+        computed_at   TIMESTAMPTZ   NOT NULL,
+        PRIMARY KEY (route, hour_of_day, day_of_week, computed_at)
+    );
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: hk-bus
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spark-batch
+  namespace: hk-bus
+spec:
+  schedule: "0 * * * *"   # every hour
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: spark-batch
+              image: kmb-spark:latest
+              imagePullPolicy: IfNotPresent
+              command: ["/opt/bitnami/spark/bin/spark-submit"]
+              args:
+                - "--master=local[2]"
+                - "--packages=org.postgresql:postgresql:42.7.1"
+                - "/opt/bitnami/spark/jobs/batch_job.py"
+              env:
+                - name: POSTGRES_HOST
+                  value: "postgres.hk-bus.svc.cluster.local"
+                - name: POSTGRES_DB
+                  value: "hkbus"
+                - name: POSTGRES_USER
+                  value: "postgres"
+                - name: POSTGRES_PASSWORD
+                  value: "postgres"

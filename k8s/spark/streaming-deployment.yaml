@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+  namespace: hk-bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      containers:
+        - name: spark-streaming
+          image: kmb-spark:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/bitnami/spark/bin/spark-submit"]
+          args:
+            - "--master=local[2]"
+            - "--packages=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.7.1"
+            - "/opt/bitnami/spark/jobs/streaming_job.py"
+          env:
+            - name: KAFKA_BROKER
+              value: "kafka.hk-bus.svc.cluster.local:9092"
+            - name: KAFKA_TOPIC
+              value: "kmb-eta-raw"
+            - name: POSTGRES_HOST
+              value: "postgres.hk-bus.svc.cluster.local"
+            - name: POSTGRES_DB
+              value: "hkbus"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres"

@@ -1,0 +1,20 @@
+apiVersion: openfaas.com/v1
+kind: Function
+metadata:
+  name: kmb-fetcher
+  namespace: openfaas-fn
+  annotations:
+    topic: "cron-function"
+    schedule: "* * * * *"
+spec:
+  name: kmb-fetcher
+  image: kmb-fetcher:latest
+  imagePullPolicy: IfNotPresent
+  environment:
+    KAFKA_BROKER: "kafka.hk-bus.svc.cluster.local:9092"
+    KAFKA_TOPIC: "kmb-eta-raw"
+  labels:
+    com.openfaas.scale.min: "0"
+    com.openfaas.scale.max: "5"
+    com.openfaas.scale.zero: "true"
+    com.openfaas.scale.zero-duration: "2m"
