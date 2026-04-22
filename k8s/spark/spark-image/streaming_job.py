@@ -83,6 +83,7 @@ def write_realtime(conn, route: str, dir_: str, window_start: str,
 # ── Spark entry point ─────────────────────────────────────────────────────────
 
 def main():
+    import sys
     from pyspark.sql import SparkSession
     from pyspark.sql.functions import (
         from_json, col, window, avg, count as spark_count,
@@ -95,13 +96,22 @@ def main():
     KAFKA_BROKER = os.environ.get("KAFKA_BROKER", "kafka:9092")
     KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "kmb-eta-raw")
 
-    spark = SparkSession.builder \
-        .appName("KMBStreamingJob") \
-        .config("spark.jars.packages",
-                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
-                "org.postgresql:postgresql:42.7.1") \
-        .getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
+    print(f"[INFO] Starting Spark Streaming Job", file=sys.stderr)
+    print(f"[INFO] Kafka Broker: {KAFKA_BROKER}", file=sys.stderr)
+    print(f"[INFO] Kafka Topic: {KAFKA_TOPIC}", file=sys.stderr)
+
+    try:
+        spark = SparkSession.builder \
+            .appName("KMBStreamingJob") \
+            .config("spark.jars.packages",
+                    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
+                    "org.postgresql:postgresql:42.7.1") \
+            .getOrCreate()
+        spark.sparkContext.setLogLevel("WARN")
+        print(f"[INFO] SparkSession created successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"[ERROR] Failed to create SparkSession: {e}", file=sys.stderr)
+        sys.exit(1)
 
     schema = StructType([
         StructField("co", StringType()),
@@ -120,16 +130,22 @@ def main():
 
     wait_udf = udf(compute_wait_seconds, DoubleType())
 
-    raw_df = spark.readStream \
-        .format("kafka") \
-        .option("kafka.bootstrap.servers", KAFKA_BROKER) \
-        .option("subscribe", KAFKA_TOPIC) \
-        .option("startingOffsets", "latest") \
-        .load() \
-        .select(from_json(col("value").cast("string"), schema).alias("d")) \
-        .select("d.*") \
-        .withColumn("wait_sec", wait_udf(col("eta"), col("data_timestamp"))) \
-        .withColumn("event_time", to_timestamp(col("data_timestamp")))
+    print(f"[INFO] Reading from Kafka topic: {KAFKA_TOPIC}", file=sys.stderr)
+    try:
+        raw_df = spark.readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+            .option("subscribe", KAFKA_TOPIC) \
+            .option("startingOffsets", "latest") \
+            .load() \
+            .select(from_json(col("value").cast("string"), schema).alias("d")) \
+            .select("d.*") \
+            .withColumn("wait_sec", wait_udf(col("eta"), col("data_timestamp"))) \
+            .withColumn("event_time", to_timestamp(col("data_timestamp")))
+        print(f"[INFO] Kafka stream loaded successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"[ERROR] Failed to load Kafka stream: {e}", file=sys.stderr)
+        sys.exit(1)
 
     agg_df = raw_df \
         .withWatermark("event_time", "2 minutes") \
@@ -143,22 +159,32 @@ def main():
         )
 
     def write_batch(batch_df, batch_id):
-        rows = batch_df.collect()
-        conn = get_db_conn()
-        for row in rows:
-            avg_w = row["avg_wait_sec"]
-            flag = compute_delay_flag(avg_w)
-            write_realtime(conn, row["route"], row["dir"],
-                           str(row["window"]["start"]), avg_w, flag, row["sample_count"])
-        conn.close()
+        try:
+            rows = batch_df.collect()
+            if rows:
+                conn = get_db_conn()
+                for row in rows:
+                    avg_w = row["avg_wait_sec"]
+                    flag = compute_delay_flag(avg_w)
+                    write_realtime(conn, row["route"], row["dir"],
+                                   str(row["window"]["start"]), avg_w, flag, row["sample_count"])
+                conn.close()
+                print(f"[INFO] Wrote {len(rows)} records to PostgreSQL", file=sys.stderr)
+        except Exception as e:
+            print(f"[ERROR] Failed to write batch: {e}", file=sys.stderr)
 
-    query = agg_df.writeStream \
-        .foreachBatch(write_batch) \
-        .outputMode("update") \
-        .trigger(processingTime="30 seconds") \
-        .start()
-
-    query.awaitTermination()
+    print(f"[INFO] Starting streaming query", file=sys.stderr)
+    try:
+        query = agg_df.writeStream \
+            .foreachBatch(write_batch) \
+            .outputMode("update") \
+            .trigger(processingTime="30 seconds") \
+            .start()
+        print(f"[INFO] Stream query started, awaiting termination...", file=sys.stderr)
+        query.awaitTermination()
+    except Exception as e:
+        print(f"[ERROR] Streaming query failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

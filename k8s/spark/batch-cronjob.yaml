@@ -12,8 +12,8 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: spark-batch
-              image: ansonhui123/kmb-spark:v2
-              imagePullPolicy: IfNotPresent
+              image: ansonhui123/kmb-spark:v3
+              imagePullPolicy: Always
               command: ["spark-submit"]
               args:
                 - "--master=local[2]"
@@ -21,7 +21,7 @@ spec:
                 - "/opt/spark/jobs/batch_job.py"
               env:
                 - name: POSTGRES_HOST
-                  value: "postgres.hk-bus.svc.cluster.local"
+                  value: "postgres-db.hk-bus.svc.cluster.local"
                 - name: POSTGRES_DB
                   value: "hkbus"
                 - name: POSTGRES_USER
