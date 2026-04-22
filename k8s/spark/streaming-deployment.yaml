@@ -15,16 +15,15 @@ spec:
     spec:
       containers:
         - name: spark-streaming
-          image: kmb-spark:latest
+          image: ansonhui123/kmb-spark:v2
           imagePullPolicy: IfNotPresent
-          command: ["/opt/spark/bin/spark-submit"]
+          command: ["spark-submit"]
           args:
             - "--master=local[2]"
-            - "--packages=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.7.1"
             - "/opt/spark/jobs/streaming_job.py"
           env:
             - name: KAFKA_BROKER
-              value: "kafka.hk-bus.svc.cluster.local:9092"
+              value: "kafka-broker.hk-bus.svc.cluster.local:9092"
             - name: KAFKA_TOPIC
               value: "kmb-eta-raw"
             - name: POSTGRES_HOST

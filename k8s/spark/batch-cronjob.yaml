@@ -12,9 +12,9 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: spark-batch
-              image: kmb-spark:latest
+              image: ansonhui123/kmb-spark:v2
               imagePullPolicy: IfNotPresent
-              command: ["/opt/spark/bin/spark-submit"]
+              command: ["spark-submit"]
               args:
                 - "--master=local[2]"
                 - "--packages=org.postgresql:postgresql:42.7.1"

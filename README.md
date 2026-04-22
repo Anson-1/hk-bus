@@ -146,7 +146,7 @@ kubectl apply -f k8s/kafka/
 kubectl apply -f k8s/postgres/
 
 # Wait for Kafka and PostgreSQL to be ready
-kubectl wait --for=condition=ready pod -l app=kafka -n hk-bus --timeout=120s
+
 kubectl wait --for=condition=ready pod -l app=postgres -n hk-bus --timeout=60s
 
 kubectl apply -f k8s/spark/
@@ -299,9 +299,6 @@ hk-bus/
 │       ├── requirements.txt
 │       ├── stops_config.json   # 757 stop IDs for 22 routes (committed)
 │       └── Dockerfile
-├── spark/
-│   ├── streaming_job.py        # Spark Structured Streaming: 1-min delay detection
-│   └── batch_job.py            # Spark Batch: hourly historical analytics
 ├── k8s/
 │   ├── namespace.yaml
 │   ├── kafka/
@@ -311,7 +308,10 @@ hk-bus/
 │   │   ├── postgres.yaml       # Includes init.sql schema as ConfigMap
 │   │   └── init.sql
 │   ├── spark/
-│   │   ├── spark-image/Dockerfile
+│   │   ├── spark-image/
+│   │   │   ├── Dockerfile
+│   │   │   ├── streaming_job.py
+│   │   │   └── batch_job.py
 │   │   ├── streaming-deployment.yaml
 │   │   └── batch-cronjob.yaml
 │   ├── grafana/
