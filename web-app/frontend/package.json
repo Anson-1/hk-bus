@@ -1,0 +1,23 @@
+{
+  "name": "hk-bus-web",
+  "version": "1.0.0",
+  "description": "Web app for HK Bus real-time ETA tracking",
+  "type": "module",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.6.5",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^4.2.1",
+    "react-router-dom": "^6.20.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.10"
+  }
+}

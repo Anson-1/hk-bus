@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./web-app/backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      DB_HOST: postgres-db.hk-bus.svc.cluster.local
+      DB_PORT: 5432
+      DB_NAME: hk_bus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PORT: 3001
+      NODE_ENV: development
+    depends_on:
+      - postgres
+    networks:
+      - hk-bus-network
+
+  frontend:
+    build:
+      context: ./web-app/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - hk-bus-network
+
+networks:
+  hk-bus-network:
+    driver: bridge

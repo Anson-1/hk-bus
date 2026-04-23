@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: spark-streaming
-          image: ansonhui123/kmb-spark:v3
+          image: ansonhui123/kmb-spark:v9
           imagePullPolicy: Always
           command: ["spark-submit"]
           args:
@@ -30,7 +30,7 @@ spec:
             - name: POSTGRES_HOST
               value: "postgres-db.hk-bus.svc.cluster.local"
             - name: POSTGRES_DB
-              value: "hkbus"
+              value: "hk_bus"
             - name: POSTGRES_USER
               value: "postgres"
             - name: POSTGRES_PASSWORD

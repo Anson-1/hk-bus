@@ -12,7 +12,7 @@
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "datasource": "PostgreSQL",
       "targets": [{
-        "rawSql": "SELECT route || ' ' || dir AS route, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec FROM eta_realtime WHERE window_start = (SELECT MAX(window_start) FROM eta_realtime) ORDER BY avg_wait_sec DESC",
+        "rawSql": "SELECT route || ' ' || dir AS route, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec FROM eta_realtime WHERE window_start = (SELECT MAX(window_start) FROM eta_realtime) AND route IS NOT NULL ORDER BY avg_wait_sec DESC",
         "format": "table"
       }]
     },
@@ -41,7 +41,7 @@
         }]
       },
       "targets": [{
-        "rawSql": "SELECT route, dir, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec, sample_count FROM eta_realtime WHERE delay_flag = true AND window_start >= NOW() - INTERVAL '2 minutes' ORDER BY avg_wait_sec DESC",
+        "rawSql": "SELECT route, dir, ROUND(avg_wait_sec::numeric, 0) AS avg_wait_sec, sample_count FROM eta_realtime WHERE avg_delay_flag = 1 AND window_start >= NOW() - INTERVAL '2 hours' AND route IS NOT NULL ORDER BY avg_wait_sec DESC",
         "format": "table"
       }]
     },
@@ -52,8 +52,30 @@
       "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
       "datasource": "PostgreSQL",
       "targets": [{
-        "rawSql": "SELECT window_start AS time, route || ' ' || dir AS metric, avg_wait_sec AS value FROM eta_realtime WHERE window_start >= NOW() - INTERVAL '30 minutes' ORDER BY window_start",
+        "rawSql": "SELECT window_start AS time, route || ' ' || dir AS metric, avg_wait_sec AS value FROM eta_realtime WHERE window_start >= NOW() - INTERVAL '30 hours' AND route IS NOT NULL ORDER BY window_start",
         "format": "time_series"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Sample Count by Route",
+      "type": "bargauge",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT route || ' ' || dir AS route, SUM(sample_count) AS total_samples FROM eta_realtime WHERE route IS NOT NULL GROUP BY route, dir ORDER BY total_samples DESC",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Delayed Routes (Flag=1) Count",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+      "datasource": "PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS delayed_windows FROM eta_realtime WHERE avg_delay_flag = 1",
+        "format": "table"
       }]
     }
   ]

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hk-bus-web
+  namespace: hk-bus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hk-bus-web
+  template:
+    metadata:
+      labels:
+        app: hk-bus-web
+    spec:
+      containers:
+        - name: web
+          image: ansonhui123/hk-bus-web:v4
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hk-bus-web
+  namespace: hk-bus
+spec:
+  type: LoadBalancer
+  selector:
+    app: hk-bus-web
+  ports:
+    - port: 80
+      targetPort: 3000
+      name: http

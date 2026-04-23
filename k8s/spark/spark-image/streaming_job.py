@@ -18,11 +18,11 @@ def compute_wait_seconds(eta_str: str, data_ts_str: str):
         return None
 
 
-def compute_delay_flag(avg_wait_sec) -> bool:
-    """True if average wait exceeds 10 minutes."""
+def compute_delay_flag(avg_wait_sec) -> float:
+    """Return 1.0 if average wait exceeds 10 minutes, 0.0 otherwise."""
     if avg_wait_sec is None:
-        return False
-    return avg_wait_sec > 600
+        return 0.0
+    return 1.0 if avg_wait_sec > 600 else 0.0
 
 
 def parse_eta_record(record: dict) -> dict:
@@ -66,16 +66,16 @@ def write_raw(conn, record: dict):
 
 
 def write_realtime(conn, route: str, dir_: str, window_start: str,
-                   avg_wait: float, delay_flag: bool, count: int):
+                   avg_wait: float, avg_delay_flag: float, count: int):
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO eta_realtime (route, dir, window_start, avg_wait_sec, delay_flag, sample_count)
+            """INSERT INTO eta_realtime (route, dir, window_start, avg_wait_sec, avg_delay_flag, sample_count)
                VALUES (%s,%s,%s,%s,%s,%s)
                ON CONFLICT (route, dir, window_start) DO UPDATE
                SET avg_wait_sec=EXCLUDED.avg_wait_sec,
-                   delay_flag=EXCLUDED.delay_flag,
+                   avg_delay_flag=EXCLUDED.avg_delay_flag,
                    sample_count=EXCLUDED.sample_count""",
-            (route, dir_, window_start, avg_wait, delay_flag, count)
+            (route, dir_, window_start, avg_wait, avg_delay_flag, count)
         )
     conn.commit()
 
@@ -136,7 +136,7 @@ def main():
             .format("kafka") \
             .option("kafka.bootstrap.servers", KAFKA_BROKER) \
             .option("subscribe", KAFKA_TOPIC) \
-            .option("startingOffsets", "latest") \
+            .option("startingOffsets", "earliest") \
             .load() \
             .select(from_json(col("value").cast("string"), schema).alias("d")) \
             .select("d.*") \
@@ -172,6 +172,8 @@ def main():
                 print(f"[INFO] Wrote {len(rows)} records to PostgreSQL", file=sys.stderr)
         except Exception as e:
             print(f"[ERROR] Failed to write batch: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     print(f"[INFO] Starting streaming query", file=sys.stderr)
     try:
