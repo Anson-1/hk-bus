@@ -47,13 +47,10 @@ let stats = {
 /**
  * Get all stops for a given route (with service_type for ETA queries)
  */
-async function getStopsForRoute(routeNum, limit = 20, direction = 'outbound') {
+async function getStopsForRoute(routeNum, limit = 30, direction = 'outbound') {
   try {
-    // For inbound 91M, use service_type 2; otherwise use service_type 1
-    let serviceType = 1;
-    if (routeNum === '91M' && direction === 'inbound') {
-      serviceType = 2;
-    }
+    // Use service_type 1 for all routes (covers complete routes)
+    const serviceType = 1;
 
     // KMB API uses path params: /route-stop/{route}/{direction}/{service_type}
     // Direction must be lowercase: "inbound" or "outbound"
@@ -148,8 +145,8 @@ async function fetchAndPersistETAs() {
       const directions = routeNum === '91M' ? ['inbound', 'outbound'] : ['outbound'];
 
       for (const dir of directions) {
-        // Get sample stops for this route (first 25 for comprehensive coverage)
-        const stops = await getStopsForRoute(routeNum, 25, dir);
+        // Get all stops for this route (up to 30 for comprehensive coverage)
+        const stops = await getStopsForRoute(routeNum, 30, dir);
         
         if (stops.length === 0) {
           console.log(`  ⏭️  Route ${routeNum} (${dir}): no stops available`);

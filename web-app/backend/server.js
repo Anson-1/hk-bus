@@ -428,31 +428,33 @@ app.get('/api/route/:routeNum', async (req, res) => {
     let direction = 'I';
     let selectedServiceType = null;
 
-    // Try inbound first
+    // Try inbound first with service_type 1 (complete route)
     try {
       stopsResponse = await axios.get(
-        `${KMB_API_BASE}/route-stop/${routeNum}/inbound/2`,
+        `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
         { timeout: 5000 }
       );
-      selectedServiceType = '2';
+      selectedServiceType = '1';
       direction = 'I';
     } catch (e) {
-      // If inbound service_type 2 fails, try inbound service_type 1
+      // If inbound fails, try outbound
       try {
-        stopsResponse = await axios.get(
-          `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
-          { timeout: 5000 }
-        );
-        selectedServiceType = '1';
-        direction = 'I';
-      } catch (e2) {
-        // If both inbound fail, try outbound
         stopsResponse = await axios.get(
           `${KMB_API_BASE}/route-stop/${routeNum}/outbound/1`,
           { timeout: 5000 }
         );
         direction = 'O';
         selectedServiceType = '1';
+      } catch (e2) {
+        // If both fail, return empty
+        return res.json({
+          route: {
+            route: routeNum,
+            name: 'Route not found',
+            name_tc: '路線不存在',
+          },
+          stops: []
+        });
       }
     }
 
