@@ -32,32 +32,54 @@ const routeCache = {};
 
 /**
  * Get route details from KMB API (with caching)
+ * Fetches destination information for a specific route
  */
-async function getRouteDetails(routeNum) {
+async function getRouteDetails(routeNum, direction = 'O') {
   if (!routeNum) {
     return { route: routeNum, name: 'Unknown Route', name_tc: '未知路線' };
   }
   
-  if (routeCache[routeNum]) {
-    return routeCache[routeNum];
+  // Use direction in cache key to get correct destination
+  const cacheKey = `${routeNum}_${direction}`;
+  if (routeCache[cacheKey]) {
+    return routeCache[cacheKey];
   }
   
   try {
-    // Use the /route?routes= endpoint which requires the routes parameter
+    // Fetch all variants of this route from KMB API
     const response = await axios.get(`${KMB_API_BASE}/route`, {
       params: { routes: routeNum },
       timeout: 3000
     });
     
     if (response.data && response.data.data && response.data.data.length > 0) {
-      const route = response.data.data[0];
-      routeCache[routeNum] = {
+      // Find the matching direction (prefer service_type 1, then others)
+      let matchedRoute = null;
+      const routes = response.data.data;
+      
+      // Filter to only routes matching the requested route number
+      const matchingRoutes = routes.filter(r => r.route === routeNum);
+      
+      // First, look for exact bound match with service_type 1
+      matchedRoute = matchingRoutes.find(r => r.bound === direction && r.service_type === '1');
+      
+      // If not found, accept any matching bound
+      if (!matchedRoute) {
+        matchedRoute = matchingRoutes.find(r => r.bound === direction);
+      }
+      
+      // If still not found, try the first route from API (fallback)
+      if (!matchedRoute) {
+        matchedRoute = matchingRoutes.length > 0 ? matchingRoutes[0] : routes[0];
+      }
+      
+      routeCache[cacheKey] = {
         route: routeNum,
-        name: `${route.orig_en} → ${route.dest_en}`,
-        name_tc: `${route.orig_tc} → ${route.dest_tc}`,
+        name: `${matchedRoute.orig_en} → ${matchedRoute.dest_en}`,
+        name_tc: `${matchedRoute.orig_tc} → ${matchedRoute.dest_tc}`,
       };
-      console.log(`Fetched route ${routeNum}: ${routeCache[routeNum].name}`);
-      return routeCache[routeNum];
+      console.log(`Fetched route ${routeNum} (${direction}): ${routeCache[cacheKey].name}`);
+      return routeCache[cacheKey];
     }
   } catch (e) {
     console.error(`Error fetching route ${routeNum}:`, e.message);
@@ -163,7 +185,7 @@ app.get('/api/eta/:stopId', async (req, res) => {
     // Enrich ETAs with route details (show all routes)
     const enrichedETAs = await Promise.all(
       result.rows.map(async (row) => {
-        const routeDetails = await getRouteDetails(row.route);
+        const routeDetails = await getRouteDetails(row.route, row.dir);
         return {
           ...row,
           route_name: routeDetails.name,
