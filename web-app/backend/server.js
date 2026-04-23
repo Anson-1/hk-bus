@@ -140,22 +140,25 @@ app.get('/api/eta/:stopId', async (req, res) => {
       // If we can't get stop info, still show available ETA data
     }
 
-    // Query PostgreSQL for latest ETA data (all available routes)
+    // Query PostgreSQL for latest ETA data for THIS specific stop
     const query = `
-      SELECT 
-        route,
-        dir,
-        ROUND(avg_wait_sec::numeric, 0) AS wait_sec,
-        sample_count,
-        window_start,
-        CASE WHEN avg_delay_flag > 0.5 THEN true ELSE false END AS is_delayed
-      FROM eta_realtime
-      WHERE route IS NOT NULL AND route != ''
-      ORDER BY window_start DESC, route ASC
+      SELECT DISTINCT
+        r.route,
+        r.dir,
+        ROUND(r.avg_wait_sec::numeric, 0) AS wait_sec,
+        r.sample_count,
+        r.window_start,
+        CASE WHEN r.avg_delay_flag > 0.5 THEN true ELSE false END AS is_delayed
+      FROM eta_realtime r
+      INNER JOIN eta_raw raw ON r.route = raw.route AND r.dir = raw.dir
+      WHERE raw.stop_id = $1
+        AND r.route IS NOT NULL 
+        AND r.route != ''
+      ORDER BY r.window_start DESC, r.route ASC
       LIMIT 50
     `;
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, [stopId]);
 
     // Enrich ETAs with route details (show all routes)
     const enrichedETAs = await Promise.all(
