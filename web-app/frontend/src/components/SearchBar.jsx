@@ -1,13 +1,16 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import axios from 'axios';
 
-function SearchBar({ onSelectStop }) {
+function SearchBar({ onSelectRoute }) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const API_BASE = '/api';
+
+  // Common HK bus routes for quick suggestions
+  const COMMON_ROUTES = ['1', '2', '2B', '3', '6', '11', '11C', '11K', '103', '260'];
 
   const handleSearch = useCallback(async (searchQuery) => {
     if (searchQuery.length < 1) {
@@ -18,14 +21,17 @@ function SearchBar({ onSelectStop }) {
 
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE}/search`, {
+      const response = await axios.get(`${API_BASE}/route-search`, {
         params: { q: searchQuery }
       });
       setSuggestions(response.data.results);
       setShowSuggestions(true);
     } catch (error) {
       console.error('Search error:', error);
-      setSuggestions([]);
+      // Show common routes as fallback
+      const filtered = COMMON_ROUTES.filter(r => r.includes(searchQuery.toUpperCase()));
+      setSuggestions(filtered.map(r => ({ route: r, name_en: `Route ${r}` })));
+      setShowSuggestions(true);
     } finally {
       setLoading(false);
     }
@@ -50,11 +56,11 @@ function SearchBar({ onSelectStop }) {
     }
   };
 
-  const handleSelectSuggestion = (stop) => {
+  const handleSelectSuggestion = (route) => {
     setQuery('');
     setSuggestions([]);
     setShowSuggestions(false);
-    onSelectStop(stop.stop_id);
+    onSelectRoute(route.route);
   };
 
   useEffect(() => {
@@ -70,11 +76,11 @@ function SearchBar({ onSelectStop }) {
       <div className="search-input-container">
         <input
           type="text"
-          placeholder="Search bus stop by ID or name (e.g., '001' or 'Central')"
+          placeholder="Search route (e.g., '1', '103', '2B')"
           value={query}
           onChange={handleInputChange}
           onKeyPress={handleKeyPress}
-          onFocus={() => query && setShowSuggestions(true)}
+          onFocus={() => setShowSuggestions(true)}
         />
         <button 
           className="search-button"
@@ -87,17 +93,17 @@ function SearchBar({ onSelectStop }) {
       </div>
       {showSuggestions && suggestions.length > 0 && (
         <div className="search-suggestions">
-          {suggestions.map((stop) => (
+          {suggestions.map((route) => (
             <div
-              key={stop.stop_id}
+              key={route.route}
               className="search-suggestion-item"
-              onClick={() => handleSelectSuggestion(stop)}
+              onClick={() => handleSelectSuggestion(route)}
             >
               <div className="suggestion-text">
-                {stop.name_tc || stop.name_en}
+                Route {route.route}
               </div>
               <div className="suggestion-id">
-                Stop ID: {stop.stop_id}
+                {route.name_en || 'Bus Route'}
               </div>
             </div>
           ))}

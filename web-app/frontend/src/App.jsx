@@ -1,29 +1,14 @@
 import React, { useState, useCallback } from 'react';
 import './App.css';
 import SearchBar from './components/SearchBar';
-import BusStopView from './components/BusStopView';
+import RouteDetailsView from './components/RouteDetailsView';
 import MapDisplay from './components/MapDisplay';
 
 function App() {
-  const [selectedStop, setSelectedStop] = useState(null);
-  const [etas, setETAs] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [selectedRoute, setSelectedRoute] = useState(null);
 
-  const handleStopSelect = useCallback(async (stopId) => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `/api/eta/${stopId}`
-      );
-      const data = await response.json();
-      setSelectedStop(data.stop);
-      setETAs(data.etas);
-    } catch (error) {
-      console.error('Error fetching ETAs:', error);
-      alert('Failed to fetch bus information');
-    } finally {
-      setLoading(false);
-    }
+  const handleRouteSelect = useCallback((routeNum) => {
+    setSelectedRoute(routeNum);
   }, []);
 
   return (
@@ -34,32 +19,25 @@ function App() {
       </header>
 
       <div className="container">
-        <SearchBar onSelectStop={handleStopSelect} />
+        <SearchBar onSelectRoute={handleRouteSelect} />
 
-        {selectedStop && (
+        {selectedRoute && (
           <div className="content">
             <div className="left-panel">
-              <BusStopView
-                stop={selectedStop}
-                etas={etas}
-                loading={loading}
-              />
-            </div>
-            <div className="right-panel">
-              <MapDisplay stop={selectedStop} />
+              <RouteDetailsView routeNum={selectedRoute} />
             </div>
           </div>
         )}
 
-        {!selectedStop && (
+        {!selectedRoute && (
           <div className="welcome">
             <div className="welcome-box">
               <h2>Welcome to HK Bus Tracker</h2>
-              <p>Search for a bus stop to see real-time ETAs</p>
+              <p>Search for a bus route to see real-time arrival times at all stops</p>
               <ul>
-                <li>📍 Search by stop ID or name (in Chinese or English)</li>
-                <li>🗺️ View the bus stop on an interactive map</li>
-                <li>⏱️ See real-time bus arrival times</li>
+                <li>🔍 Search by route number (e.g., '1', '103', '2B')</li>
+                <li>⏱️ See real-time bus arrival times at each stop</li>
+                <li>📊 View based on live ETA data from KMB API</li>
               </ul>
             </div>
           </div>

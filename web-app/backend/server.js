@@ -263,6 +263,51 @@ app.get('/api/search', async (req, res) => {
 });
 
 /**
+ * GET /api/route-search
+ * Search for routes
+ */
+app.get('/api/route-search', async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q || q.length < 1) {
+      return res.status(400).json({ error: 'Query parameter required' });
+    }
+
+    // Common HK routes - return matching ones
+    const COMMON_ROUTES = [
+      { route: '1', name_en: 'CHUK YUEN ESTATE → STAR FERRY' },
+      { route: '1A', name_en: 'JORDAN ROAD → STAR FERRY' },
+      { route: '2', name_en: 'CHUK YUEN ESTATE → ADMIRALTY' },
+      { route: '2B', name_en: 'CHUK YUEN ESTATE → CHEUNG SHA WAN' },
+      { route: '3', name_en: 'CHUK YUEN ESTATE → CENTRAL' },
+      { route: '3C', name_en: 'CHUK YUEN ESTATE → ADMIRALTY' },
+      { route: '6', name_en: 'CHUK YUEN ESTATE → CENTRAL' },
+      { route: '11', name_en: 'SAU MAU PING → STAR FERRY' },
+      { route: '11C', name_en: 'CHUK YUEN ESTATE → SAU MAU PING' },
+      { route: '11K', name_en: 'CHUK YUEN ESTATE → HUNG HOM STATION' },
+      { route: '103', name_en: 'CHUK YUEN ESTATE → POKFIELD RD' },
+      { route: '260', name_en: 'CHUK YUEN ESTATE → KWAI CHUNG' },
+    ];
+
+    const searchTerm = q.toLowerCase().trim();
+    const results = COMMON_ROUTES.filter(route => 
+      route.route.toLowerCase().includes(searchTerm) ||
+      route.name_en.toLowerCase().includes(searchTerm)
+    );
+
+    res.json({
+      query: q,
+      results: results,
+      count: results.length,
+    });
+  } catch (error) {
+    console.error('Error in route search:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * GET /api/routes
  * Get list of all routes
  */
@@ -328,8 +373,98 @@ app.get('/api/route/:route/:direction', async (req, res) => {
   }
 });
 
-// ============================================================
-// ERROR HANDLING
+/**
+ * GET /api/route/:routeNum
+ * Get all stops for a route with live ETA data
+ */
+app.get('/api/route/:routeNum', async (req, res) => {
+  try {
+    const { routeNum } = req.params;
+
+    // Get route details (direction O for outbound)
+    const routeDetails = await getRouteDetails(routeNum, 'O');
+
+    // Get all stops for this route
+    const stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop`, {
+      params: { route: routeNum, bound: 'O', service_type: 1 },
+      timeout: 5000
+    });
+
+    if (!stopsResponse.data || !stopsResponse.data.data) {
+      return res.json({
+        route: {
+          route: routeNum,
+          name: routeDetails.name,
+          name_tc: routeDetails.name_tc,
+        },
+        stops: []
+      });
+    }
+
+    const allStops = stopsResponse.data.data;
+
+    // Get ETA data for each stop from database
+    const query = `
+      SELECT DISTINCT
+        raw.stop_id,
+        ROUND(AVG(raw.wait_sec)::numeric, 0) AS wait_sec,
+        COUNT(*) as sample_count,
+        MAX(raw.fetched_at)::timestamp AS window_start,
+        CASE WHEN AVG(CASE WHEN raw.delay_flag THEN 1 ELSE 0 END) > 0.5 THEN true ELSE false END AS is_delayed
+      FROM eta_raw raw
+      WHERE raw.route = $1
+        AND raw.dir = 'O'
+        AND raw.fetched_at > NOW() - INTERVAL '5 minutes'
+      GROUP BY raw.stop_id
+    `;
+
+    const etaResult = await pool.query(query, [routeNum]);
+    const etaMap = {};
+    etaResult.rows.forEach(row => {
+      etaMap[row.stop_id] = row;
+    });
+
+    // Combine stop info with ETA data, limit to first 15 stops with data
+    const stopsWithETA = allStops
+      .slice(0, 30) // Limit initial fetch to first 30 stops
+      .map((stop, idx) => ({
+        stop_id: stop.stop,
+        sequence: idx + 1,
+        name: stop.name || `Stop ${idx + 1}`,
+        name_en: stop.name,
+        name_tc: stop.name_tc || '',
+        wait_sec: etaMap[stop.stop]?.wait_sec,
+        sample_count: etaMap[stop.stop]?.sample_count,
+        is_delayed: etaMap[stop.stop]?.is_delayed || false,
+        window_start: etaMap[stop.stop]?.window_start,
+      }))
+      .sort((a, b) => {
+        // Sort by: has ETA (first), then by wait time
+        const hasETAA = a.wait_sec !== null && a.wait_sec !== undefined;
+        const hasETAB = b.wait_sec !== null && b.wait_sec !== undefined;
+        if (hasETAA && !hasETAB) return -1;
+        if (!hasETAA && hasETAB) return 1;
+        if (hasETAA && hasETAB) {
+          return parseInt(a.wait_sec) - parseInt(b.wait_sec);
+        }
+        return 0;
+      });
+
+    res.json({
+      route: {
+        route: routeNum,
+        name: routeDetails.name,
+        name_tc: routeDetails.name_tc,
+      },
+      stops: stopsWithETA,
+      totalStops: allStops.length,
+      stopsWithData: stopsWithETA.filter(s => s.wait_sec !== null && s.wait_sec !== undefined).length
+    });
+  } catch (error) {
+    console.error('Error fetching route details:', error.message);
+    res.status(500).json({ error: 'Failed to fetch route details' });
+  }
+});
 // ============================================================
 
 app.use((req, res) => {

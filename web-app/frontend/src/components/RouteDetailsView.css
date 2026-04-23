@@ -1,0 +1,187 @@
+.route-details-view {
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin: 20px 0;
+}
+
+.route-header {
+  margin-bottom: 30px;
+  text-align: center;
+  border-bottom: 3px solid #2c3e50;
+  padding-bottom: 15px;
+}
+
+.route-header h2 {
+  margin: 0;
+  color: #e74c3c;
+  font-size: 32px;
+  font-weight: bold;
+}
+
+.route-destination {
+  font-size: 16px;
+  color: #2c3e50;
+  margin-top: 8px;
+  font-weight: 500;
+}
+
+.route-destination-tc {
+  font-size: 16px;
+  color: #7f8c8d;
+  margin-top: 4px;
+}
+
+.stops-container {
+  margin: 20px 0;
+}
+
+.stops-container h3 {
+  color: #2c3e50;
+  margin: 0 0 15px 0;
+  font-size: 18px;
+  border-left: 4px solid #3498db;
+  padding-left: 10px;
+}
+
+.stops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stop-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  padding: 12px 15px;
+  background: #f8f9fa;
+  border-left: 4px solid #3498db;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.stop-card:hover {
+  background: #ecf0f1;
+  transform: translateX(2px);
+}
+
+.stop-sequence {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: #3498db;
+  color: white;
+  border-radius: 50%;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.stop-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.stop-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 2px;
+}
+
+.stop-name-tc {
+  font-size: 13px;
+  color: #7f8c8d;
+  margin-bottom: 4px;
+}
+
+.stop-id {
+  font-size: 12px;
+  color: #95a5a6;
+  font-family: monospace;
+}
+
+.stop-eta {
+  flex-shrink: 0;
+  text-align: right;
+  min-width: 100px;
+}
+
+.eta-time {
+  font-size: 18px;
+  font-weight: bold;
+  color: #e74c3c;
+  margin-bottom: 4px;
+}
+
+.eta-samples {
+  font-size: 11px;
+  color: #7f8c8d;
+  margin-bottom: 4px;
+}
+
+.eta-delayed {
+  font-size: 12px;
+  color: #e74c3c;
+  font-weight: 600;
+}
+
+.no-eta {
+  font-size: 14px;
+  color: #95a5a6;
+  font-style: italic;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px 20px;
+  color: #7f8c8d;
+  font-size: 16px;
+}
+
+.route-view {
+  padding: 20px;
+  text-align: center;
+}
+
+.route-view.loading {
+  color: #3498db;
+}
+
+.route-view.error {
+  color: #e74c3c;
+}
+
+.route-footer {
+  text-align: center;
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #ecf0f1;
+  color: #95a5a6;
+  font-size: 12px;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .stop-card {
+    flex-wrap: wrap;
+  }
+
+  .stop-info {
+    flex: 1 1 100%;
+  }
+
+  .stop-eta {
+    flex: 1 1 100%;
+    text-align: left;
+    margin-top: 8px;
+  }
+
+  .route-header h2 {
+    font-size: 24px;
+  }
+}
