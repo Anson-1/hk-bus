@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eta-fetcher
+  namespace: hk-bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eta-fetcher
+  template:
+    metadata:
+      labels:
+        app: eta-fetcher
+    spec:
+      containers:
+      - name: eta-fetcher
+        image: ansonhui123/hk-bus-eta-fetcher:v2
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        env:
+        # Database connection
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hk_bus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        # ETA Fetcher configuration
+        - name: POLL_INTERVAL
+          value: "15000"  # Fetch every 15 seconds (in milliseconds)
+        - name: NODE_ENV
+          value: "production"
+        ports:
+        - name: health
+          containerPort: 3002
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eta-fetcher
+  namespace: hk-bus
+spec:
+  selector:
+    app: eta-fetcher
+  ports:
+  - name: health
+    port: 3002
+    targetPort: 3002
+  type: ClusterIP
