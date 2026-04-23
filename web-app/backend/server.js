@@ -163,20 +163,22 @@ app.get('/api/eta/:stopId', async (req, res) => {
     }
 
     // Query PostgreSQL for latest ETA data for THIS specific stop
+    // Aggregate fresh raw ETA data (last 5 minutes) instead of waiting for Spark
     const query = `
-      SELECT DISTINCT
-        r.route,
-        r.dir,
-        ROUND(r.avg_wait_sec::numeric, 0) AS wait_sec,
-        r.sample_count,
-        r.window_start,
-        CASE WHEN r.avg_delay_flag > 0.5 THEN true ELSE false END AS is_delayed
-      FROM eta_realtime r
-      INNER JOIN eta_raw raw ON r.route = raw.route AND r.dir = raw.dir
-      WHERE raw.stop_id = $1
-        AND r.route IS NOT NULL 
-        AND r.route != ''
-      ORDER BY r.window_start DESC, r.route ASC
+      SELECT
+        route,
+        dir,
+        ROUND(AVG(wait_sec)::numeric, 0) AS wait_sec,
+        COUNT(*) as sample_count,
+        MAX(fetched_at)::timestamp AS window_start,
+        CASE WHEN AVG(CASE WHEN delay_flag THEN 1 ELSE 0 END) > 0.5 THEN true ELSE false END AS is_delayed
+      FROM eta_raw
+      WHERE stop_id = $1
+        AND fetched_at > NOW() - INTERVAL '5 minutes'
+        AND route IS NOT NULL 
+        AND route != ''
+      GROUP BY route, dir
+      ORDER BY window_start DESC, route ASC
       LIMIT 50
     `;
 
