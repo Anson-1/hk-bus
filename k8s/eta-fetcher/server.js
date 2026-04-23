@@ -21,8 +21,7 @@ const KMB_API_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
 
 // Monitored routes - all routes we want to track
 const MONITORED_ROUTES = [
-  '1', '1A', '2', '3C', '5', '6', '6C', '9', '11', '12', '13D', '15', '26', 
-  '40', '42C', '68X', '74B', '91M', '91P', '98D', '270', 'N8'
+  '1', '1A', '2', '2B', '3C', '5', '6', '6C', '9', '11', '11C', '11K', '12', '13D', '15', '26', '40', '42C', '68X', '74B', '91M', '91P', '98D', '103', '270', 'N8'
 ];
 
 // PostgreSQL connection pool
@@ -48,13 +47,13 @@ let stats = {
 };
 
 /**
- * Get all stops for a given route
+ * Get all stops for a given route (with service_type for ETA queries)
  */
 async function getStopsForRoute(routeNum, limit = 20) {
   try {
-    // Fetch outbound stops (direction O)
+    // Fetch outbound stops (direction O) - try service_type 1 first
     const response = await axios.get(`${KMB_API_BASE}/route-stop`, {
-      params: { route: routeNum, bound: 'O' },
+      params: { route: routeNum, bound: 'O', service_type: 1 },
       timeout: 5000
     });
 
@@ -75,12 +74,13 @@ async function getStopsForRoute(routeNum, limit = 20) {
 }
 
 /**
- * Get ETA data for a specific stop and route
+ * Get ETA data for a specific stop and route with service_type
  */
-async function getETA(stopId, routeNum, direction = 'O') {
+async function getETA(stopId, routeNum, serviceType = 1, direction = 'O') {
   try {
+    // KMB ETA endpoint requires: /eta/{stop_id}/{route}/{service_type}
     const response = await axios.get(
-      `${KMB_API_BASE}/eta/${stopId}/${routeNum}`,
+      `${KMB_API_BASE}/eta/${stopId}/${routeNum}/${serviceType}`,
       { timeout: 5000 }
     );
 
@@ -151,9 +151,10 @@ async function fetchAndPersistETAs() {
       for (let i = 0; i < stops.length; i++) {
         const stopInfo = stops[i];
         const stopId = stopInfo.stop;
+        const serviceType = stopInfo.service_type || 1;
 
         try {
-          const etas = await getETA(stopId, routeNum, 'O');
+          const etas = await getETA(stopId, routeNum, serviceType, 'O');
           
           if (etas.length > 0) {
             // Process each ETA entry (usually multiple per stop)
