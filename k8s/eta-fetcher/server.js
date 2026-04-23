@@ -19,10 +19,8 @@ const PORT = process.env.PORT || 3002;
 // KMB API configuration
 const KMB_API_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
 
-// Monitored routes - all routes we want to track
-const MONITORED_ROUTES = [
-  '1', '1A', '2', '2B', '3C', '5', '6', '6C', '9', '11', '11C', '11K', '12', '13D', '15', '26', '40', '42C', '68X', '74B', '91M', '91P', '98D', '103', '270', 'N8'
-];
+// Monitored routes - focus on Route 91M for HKUST testing
+const MONITORED_ROUTES = ['91M'];
 
 // PostgreSQL connection pool
 const pool = new Pool({
@@ -49,25 +47,31 @@ let stats = {
 /**
  * Get all stops for a given route (with service_type for ETA queries)
  */
-async function getStopsForRoute(routeNum, limit = 20) {
+async function getStopsForRoute(routeNum, limit = 20, direction = 'outbound') {
   try {
-    // Fetch outbound stops (direction O) - try service_type 1 first
-    const response = await axios.get(`${KMB_API_BASE}/route-stop`, {
-      params: { route: routeNum, bound: 'O', service_type: 1 },
-      timeout: 5000
-    });
+    // For inbound 91M, use service_type 2; otherwise use service_type 1
+    let serviceType = 1;
+    if (routeNum === '91M' && direction === 'inbound') {
+      serviceType = 2;
+    }
 
-    if (response.data && response.data.data) {
+    // KMB API uses path params: /route-stop/{route}/{direction}/{service_type}
+    // Direction must be lowercase: "inbound" or "outbound"
+    const response = await axios.get(
+      `${KMB_API_BASE}/route-stop/${routeNum}/${direction}/${serviceType}`,
+      { timeout: 5000 }
+    );
+
+    if (response.data && response.data.data && Array.isArray(response.data.data)) {
       // Limit to specified number of stops to avoid rate limiting
-      // These routes serve many stops across HK, but we sample a few for real-time data
-      return response.data.data.slice(0, limit);
+      const stops = response.data.data.slice(0, limit);
+      if (stops.length > 0) {
+        console.log(`      ✓ Got ${stops.length} stops for Route ${routeNum}(${direction})`);
+      }
+      return stops;
     }
   } catch (error) {
-    console.warn(`  ⚠ Failed to fetch stops for route ${routeNum}: ${error.message}`);
-    if (!stats.routeErrors[routeNum]) {
-      stats.routeErrors[routeNum] = 0;
-    }
-    stats.routeErrors[routeNum]++;
+    console.warn(`  ⚠ Failed to fetch stops for route ${routeNum} (${direction}): ${error.message}`);
   }
 
   return [];
@@ -88,7 +92,10 @@ async function getETA(stopId, routeNum, serviceType = 1, direction = 'O') {
       return response.data.data; // Return array of ETA objects
     }
   } catch (error) {
-    // Silently skip - some routes may not serve all stops
+    // Log only on first few errors to avoid spam; comment out after debugging
+    if (Math.random() < 0.1) {
+      console.warn(`      ⚠ ETA API error for stop ${stopId}: ${error.message}`);
+    }
   }
 
   return [];
@@ -137,49 +144,57 @@ async function fetchAndPersistETAs() {
 
   for (const routeNum of MONITORED_ROUTES) {
     try {
-      // Get sample stops for this route (first 5 to avoid overwhelming API)
-      const stops = await getStopsForRoute(routeNum, 5);
-      
-      if (stops.length === 0) {
-        console.log(`  ⏭️  Route ${routeNum}: no stops available`);
-        continue;
-      }
+      // For Route 91M, fetch both directions; for others, fetch outbound only
+      const directions = routeNum === '91M' ? ['inbound', 'outbound'] : ['outbound'];
 
-      console.log(`  🚌 Route ${routeNum}: sampling ${stops.length} stops`);
-
-      // Fetch ETA data for each stop
-      for (let i = 0; i < stops.length; i++) {
-        const stopInfo = stops[i];
-        const stopId = stopInfo.stop;
-        const serviceType = stopInfo.service_type || 1;
-
-        try {
-          const etas = await getETA(stopId, routeNum, serviceType, 'O');
-          
-          if (etas.length > 0) {
-            // Process each ETA entry (usually multiple per stop)
-            for (const eta of etas) {
-              const waitSec = calculateWaitSeconds(eta.eta);
-              const delayFlag = (eta.rmk_en && eta.rmk_en.toLowerCase().includes('delay')) || false;
-
-              await insertETA(routeNum, 'O', stopId, waitSec, delayFlag);
-              stats.totalFetched++;
-            }
-          }
-        } catch (error) {
-          console.warn(`    ⚠ Error fetching ETA for stop ${stopId}: ${error.message}`);
+      for (const dir of directions) {
+        // Get sample stops for this route (first 25 for comprehensive coverage)
+        const stops = await getStopsForRoute(routeNum, 25, dir);
+        
+        if (stops.length === 0) {
+          console.log(`  ⏭️  Route ${routeNum} (${dir}): no stops available`);
+          continue;
         }
 
-        // Add small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 50));
+        console.log(`  🚌 Route ${routeNum} (${dir}): sampling ${stops.length} stops`);
+
+        // Convert direction name to DB code: "inbound" → "I", "outbound" → "O"
+        const dirCode = dir === 'inbound' ? 'I' : 'O';
+
+        // Fetch ETA data for each stop
+        for (let i = 0; i < stops.length; i++) {
+          const stopInfo = stops[i];
+          const stopId = stopInfo.stop;
+          const serviceType = stopInfo.service_type || 1;
+
+          try {
+            const etas = await getETA(stopId, routeNum, serviceType, dir);
+            
+            if (etas.length > 0) {
+              // Process each ETA entry (usually multiple per stop)
+              for (const eta of etas) {
+                const waitSec = calculateWaitSeconds(eta.eta);
+                const delayFlag = (eta.rmk_en && eta.rmk_en.toLowerCase().includes('delay')) || false;
+
+                await insertETA(routeNum, dirCode, stopId, waitSec, delayFlag);
+                stats.totalFetched++;
+              }
+            }
+          } catch (error) {
+            console.warn(`    ⚠ Error fetching ETA for stop ${stopId}: ${error.message}`);
+          }
+
+          // Add small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
       }
+
+      // Add delay between routes to avoid overwhelming KMB API
+      await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error(`  ✗ Route ${routeNum} error: ${error.message}`);
       stats.totalErrors++;
     }
-
-    // Add delay between routes to avoid overwhelming KMB API
-    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   stats.lastUpdate = new Date().toISOString();

@@ -30,6 +30,47 @@ const MONITORED_ROUTES = ['1', '1A', '2', '3C', '5', '6', '6C', '9', '11', '12',
 // Cache for route info
 const routeCache = {};
 
+// Cache for stop info
+const stopCache = {};
+
+/**
+ * Get stop details from KMB API (with caching)
+ */
+async function getStopDetails(stopId) {
+  if (stopCache[stopId]) {
+    return stopCache[stopId];
+  }
+
+  try {
+    const response = await axios.get(`${KMB_API_BASE}/stop/${stopId}`, {
+      timeout: 5000
+    });
+
+    // Response format: response.data.data (object, not array)
+    if (response.data && response.data.data) {
+      const stopData = response.data.data;
+      stopCache[stopId] = {
+        stop_id: stopId,
+        name_en: stopData.name_en || '',
+        name_tc: stopData.name_tc || '',
+        lat: parseFloat(stopData.lat),
+        long: parseFloat(stopData.long),
+      };
+      return stopCache[stopId];
+    }
+  } catch (error) {
+    console.warn(`Failed to fetch stop details for ${stopId}:`, error.message);
+  }
+
+  // Return minimal info as fallback
+  stopCache[stopId] = {
+    stop_id: stopId,
+    name_en: `Stop ${stopId.substring(0, 8)}`,
+    name_tc: '',
+  };
+  return stopCache[stopId];
+}
+
 /**
  * Get route details from KMB API (with caching)
  * Fetches destination information for a specific route
@@ -381,14 +422,41 @@ app.get('/api/route/:routeNum', async (req, res) => {
   try {
     const { routeNum } = req.params;
 
-    // Get route details (direction O for outbound)
-    const routeDetails = await getRouteDetails(routeNum, 'O');
+    // Try to fetch inbound route first (for routes like 91M that go to HKUST)
+    // Then fall back to outbound
+    let stopsResponse = null;
+    let direction = 'I';
+    let selectedServiceType = null;
 
-    // Get all stops for this route
-    const stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop`, {
-      params: { route: routeNum, bound: 'O', service_type: 1 },
-      timeout: 5000
-    });
+    // Try inbound first
+    try {
+      stopsResponse = await axios.get(
+        `${KMB_API_BASE}/route-stop/${routeNum}/inbound/2`,
+        { timeout: 5000 }
+      );
+      selectedServiceType = '2';
+      direction = 'I';
+    } catch (e) {
+      // If inbound service_type 2 fails, try inbound service_type 1
+      try {
+        stopsResponse = await axios.get(
+          `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
+          { timeout: 5000 }
+        );
+        selectedServiceType = '1';
+        direction = 'I';
+      } catch (e2) {
+        // If both inbound fail, try outbound
+        stopsResponse = await axios.get(
+          `${KMB_API_BASE}/route-stop/${routeNum}/outbound/1`,
+          { timeout: 5000 }
+        );
+        direction = 'O';
+        selectedServiceType = '1';
+      }
+    }
+
+    const routeDetails = await getRouteDetails(routeNum, direction);
 
     if (!stopsResponse.data || !stopsResponse.data.data) {
       return res.json({
@@ -403,7 +471,7 @@ app.get('/api/route/:routeNum', async (req, res) => {
 
     const allStops = stopsResponse.data.data;
 
-    // Get ETA data for each stop from database
+    // Get ETA data for each stop from database (use most recent 2 minutes for accuracy)
     const query = `
       SELECT DISTINCT
         raw.stop_id,
@@ -413,42 +481,52 @@ app.get('/api/route/:routeNum', async (req, res) => {
         CASE WHEN AVG(CASE WHEN raw.delay_flag THEN 1 ELSE 0 END) > 0.5 THEN true ELSE false END AS is_delayed
       FROM eta_raw raw
       WHERE raw.route = $1
-        AND raw.dir = 'O'
-        AND raw.fetched_at > NOW() - INTERVAL '5 minutes'
+        AND raw.dir = $2
+        AND raw.fetched_at > NOW() - INTERVAL '2 minutes'
       GROUP BY raw.stop_id
     `;
 
-    const etaResult = await pool.query(query, [routeNum]);
+    const etaResult = await pool.query(query, [routeNum, direction]);
     const etaMap = {};
     etaResult.rows.forEach(row => {
       etaMap[row.stop_id] = row;
     });
 
-    // Combine stop info with ETA data, limit to first 15 stops with data
-    const stopsWithETA = allStops
-      .slice(0, 30) // Limit initial fetch to first 30 stops
-      .map((stop, idx) => ({
-        stop_id: stop.stop,
-        sequence: idx + 1,
-        name: stop.name || `Stop ${idx + 1}`,
-        name_en: stop.name,
-        name_tc: stop.name_tc || '',
-        wait_sec: etaMap[stop.stop]?.wait_sec,
-        sample_count: etaMap[stop.stop]?.sample_count,
-        is_delayed: etaMap[stop.stop]?.is_delayed || false,
-        window_start: etaMap[stop.stop]?.window_start,
-      }))
-      .sort((a, b) => {
-        // Sort by: has ETA (first), then by wait time
-        const hasETAA = a.wait_sec !== null && a.wait_sec !== undefined;
-        const hasETAB = b.wait_sec !== null && b.wait_sec !== undefined;
-        if (hasETAA && !hasETAB) return -1;
-        if (!hasETAA && hasETAB) return 1;
-        if (hasETAA && hasETAB) {
-          return parseInt(a.wait_sec) - parseInt(b.wait_sec);
-        }
-        return 0;
-      });
+    // Fetch stop details with limited concurrency (max 5 parallel)
+    const stopList = allStops.slice(0, 30);
+    const stopsWithDetails = [];
+    
+    for (let i = 0; i < stopList.length; i += 5) {
+      const batch = stopList.slice(i, i + 5);
+      const batchResults = await Promise.all(
+        batch.map(async (stop, batchIdx) => {
+          const idx = i + batchIdx;
+          const stopDetails = await getStopDetails(stop.stop);
+          return {
+            stop_id: stop.stop,
+            sequence: idx + 1,
+            name: stopDetails.name_en || `Stop ${idx + 1}`,
+            name_en: stopDetails.name_en || '',
+            name_tc: stopDetails.name_tc || '',
+            lat: stopDetails.lat,
+            lng: stopDetails.long,
+            wait_sec: etaMap[stop.stop]?.wait_sec,
+            sample_count: etaMap[stop.stop]?.sample_count,
+            is_delayed: etaMap[stop.stop]?.is_delayed || false,
+            window_start: etaMap[stop.stop]?.window_start,
+          };
+        })
+      );
+      stopsWithDetails.push(...batchResults);
+    }
+
+    // Filter to only stops with ETA data
+    const stopsWithETAData = stopsWithDetails.filter(s => s.wait_sec !== null && s.wait_sec !== undefined);
+    
+    // Sort by wait time
+    const stopsWithETA = stopsWithETAData.sort((a, b) => {
+      return parseInt(a.wait_sec) - parseInt(b.wait_sec);
+    });
 
     res.json({
       route: {

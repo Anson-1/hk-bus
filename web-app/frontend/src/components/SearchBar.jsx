@@ -9,8 +9,8 @@ function SearchBar({ onSelectRoute }) {
 
   const API_BASE = '/api';
 
-  // Common HK bus routes for quick suggestions
-  const COMMON_ROUTES = ['1', '2', '2B', '3', '6', '11', '11C', '11K', '103', '260'];
+  // Focus on Route 91M only for HKUST testing
+  const COMMON_ROUTES = ['91M'];
 
   const handleSearch = useCallback(async (searchQuery) => {
     if (searchQuery.length < 1) {
@@ -46,7 +46,14 @@ function SearchBar({ onSelectRoute }) {
 
   const handleSearchButtonClick = () => {
     if (query.trim()) {
-      handleSearch(query.trim());
+      // For 91M, auto-select immediately
+      if (query.trim().toUpperCase() === '91M') {
+        onSelectRoute('91M');
+        setQuery('');
+        setShowSuggestions(false);
+      } else {
+        handleSearch(query.trim());
+      }
     }
   };
 
