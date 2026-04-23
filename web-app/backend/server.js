@@ -495,19 +495,18 @@ app.get('/api/route/:routeNum', async (req, res) => {
     });
 
     // Fetch stop details with limited concurrency (max 5 parallel)
-    const stopList = allStops.slice(0, 30);
+    const stopList = allStops.slice(0, 35);
     const stopsWithDetails = [];
     
     for (let i = 0; i < stopList.length; i += 5) {
       const batch = stopList.slice(i, i + 5);
       const batchResults = await Promise.all(
-        batch.map(async (stop, batchIdx) => {
-          const idx = i + batchIdx;
+        batch.map(async (stop) => {
           const stopDetails = await getStopDetails(stop.stop);
           return {
             stop_id: stop.stop,
-            sequence: idx + 1,
-            name: stopDetails.name_en || `Stop ${idx + 1}`,
+            sequence: stop.seq,
+            name: stopDetails.name_en || `Stop ${stop.seq}`,
             name_en: stopDetails.name_en || '',
             name_tc: stopDetails.name_tc || '',
             lat: stopDetails.lat,
@@ -522,12 +521,9 @@ app.get('/api/route/:routeNum', async (req, res) => {
       stopsWithDetails.push(...batchResults);
     }
 
-    // Filter to only stops with ETA data
-    const stopsWithETAData = stopsWithDetails.filter(s => s.wait_sec !== null && s.wait_sec !== undefined);
-    
-    // Sort by wait time
-    const stopsWithETA = stopsWithETAData.sort((a, b) => {
-      return parseInt(a.wait_sec) - parseInt(b.wait_sec);
+    // Sort by sequence number (route order)
+    const stopsWithETA = stopsWithDetails.sort((a, b) => {
+      return parseInt(a.sequence) - parseInt(b.sequence);
     });
 
     res.json({
