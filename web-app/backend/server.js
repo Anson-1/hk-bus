@@ -474,20 +474,23 @@ app.get('/api/route/:routeNum', async (req, res) => {
 
     const allStops = stopsResponse.data.data;
 
-    // Get ETA data for each stop from database (use most recent 90 seconds for real-time accuracy)
-    // Reduced from 2 minutes to 90 seconds now that eta-fetcher only collects next bus
+    // Get ETA data for each stop from database (latest value only)
+    // Get the most recent ETA for each stop, not averaged
     const query = `
-      SELECT DISTINCT
+      SELECT 
         raw.stop_id,
-        ROUND(AVG(raw.wait_sec)::numeric, 0) AS wait_sec,
-        COUNT(*) as sample_count,
-        MAX(raw.fetched_at)::timestamp AS window_start,
-        CASE WHEN AVG(CASE WHEN raw.delay_flag THEN 1 ELSE 0 END) > 0.5 THEN true ELSE false END AS is_delayed
+        raw.wait_sec,
+        COUNT(*) OVER (PARTITION BY raw.stop_id) as sample_count,
+        raw.fetched_at::timestamp AS window_start,
+        raw.delay_flag AS is_delayed
       FROM eta_raw raw
       WHERE raw.route = $1
         AND raw.dir = $2
-        AND raw.fetched_at > NOW() - INTERVAL '90 seconds'
-      GROUP BY raw.stop_id
+        AND raw.fetched_at = (
+          SELECT MAX(fetched_at) 
+          FROM eta_raw 
+          WHERE route = $1 AND dir = $2 AND stop_id = raw.stop_id
+        )
     `;
 
     const etaResult = await pool.query(query, [routeNum, direction]);
