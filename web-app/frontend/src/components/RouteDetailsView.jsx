@@ -128,11 +128,6 @@ function RouteDetailsView({ routeNum }) {
                             Based on {stop.sample_count} sample{stop.sample_count > 1 ? 's' : ''}
                           </div>
                         )}
-                        {stop.is_delayed && (
-                          <div className="eta-delayed">
-                            ⚠️ Delayed
-                          </div>
-                        )}
                       </>
                     ) : (
                       <div className="no-eta">No ETA</div>
