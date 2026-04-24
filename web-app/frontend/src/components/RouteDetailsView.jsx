@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import './RouteDetailsView.css';
@@ -39,17 +40,47 @@ function RouteDetailsView({ routeNum }) {
     };
 
     if (routeNum) {
-      // Fetch immediately on first load
+      // Initial fetch
       setLoading(true);
       fetchRouteDetails();
-      
-      // Set up polling to refresh every 15 seconds
-      const interval = setInterval(() => {
-        fetchRouteDetails();
-      }, 15000); // 15 seconds matches eta-fetcher collection interval
-      
-      // Cleanup interval on unmount or route change
-      return () => clearInterval(interval);
+
+      // Connect to WebSocket and subscribe to route updates
+      const socket = io(window.location.origin, {
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5
+      });
+
+      socket.on('connect', () => {
+        console.log('[WebSocket] Connected, subscribing to route:', routeNum);
+        socket.emit('subscribe', routeNum);
+      });
+
+      socket.on('route_update', (message) => {
+        console.log('[WebSocket] Received route update:', routeNum);
+        if (message.data) {
+          setRouteInfo(message.data.route);
+          setStops(message.data.stops || []);
+          setError(null);
+        }
+      });
+
+      socket.on('error', (err) => {
+        console.error('[WebSocket] Error:', err);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('[WebSocket] Disconnected');
+      });
+
+      // Cleanup on unmount or route change
+      return () => {
+        if (routeNum) {
+          socket.emit('unsubscribe', routeNum);
+        }
+        socket.disconnect();
+      };
     }
   }, [routeNum]);
 

@@ -2,9 +2,19 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const axios = require('axios');
+const http = require('http');
+const { Server } = require('socket.io');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -32,6 +42,31 @@ const routeCache = {};
 
 // Cache for stop info
 const stopCache = {};
+
+// Track connected clients per route
+const routeSubscribers = {}; // routeNum -> Set of socket IDs
+
+// Store last broadcast data to avoid duplicate sends
+const lastBroadcastData = {}; // routeNum -> JSON string of data
+
+/**
+ * Broadcast route updates to all subscribed clients
+ */
+function broadcastRouteUpdate(routeNum, data) {
+  const dataString = JSON.stringify(data);
+  
+  // Only broadcast if data has changed
+  if (lastBroadcastData[routeNum] === dataString) {
+    return;
+  }
+  
+  lastBroadcastData[routeNum] = dataString;
+  io.to(`route:${routeNum}`).emit('route_update', {
+    route: routeNum,
+    data: data,
+    timestamp: new Date().toISOString()
+  });
+}
 
 /**
  * Get stop details from KMB API (with caching)
@@ -475,22 +510,18 @@ app.get('/api/route/:routeNum', async (req, res) => {
     const allStops = stopsResponse.data.data;
 
     // Get ETA data for each stop from database (latest value only)
-    // Get the most recent ETA for each stop, not averaged
+    // Optimized query using indexes: idx_eta_raw_route_dir_stop, idx_eta_raw_stop_id_fetched
     const query = `
-      SELECT 
+      SELECT DISTINCT ON (raw.stop_id)
         raw.stop_id,
         raw.wait_sec,
-        COUNT(*) OVER (PARTITION BY raw.stop_id) as sample_count,
+        1 as sample_count,
         raw.fetched_at::timestamp AS window_start,
         raw.delay_flag AS is_delayed
       FROM eta_raw raw
       WHERE raw.route = $1
         AND raw.dir = $2
-        AND raw.fetched_at = (
-          SELECT MAX(fetched_at) 
-          FROM eta_raw 
-          WHERE route = $1 AND dir = $2 AND stop_id = raw.stop_id
-        )
+      ORDER BY raw.stop_id, raw.fetched_at DESC
     `;
 
     const etaResult = await pool.query(query, [routeNum, direction]);
@@ -541,6 +572,18 @@ app.get('/api/route/:routeNum', async (req, res) => {
       totalStops: allStops.length,
       stopsWithData: stopsWithETA.filter(s => s.wait_sec !== null && s.wait_sec !== undefined).length
     });
+
+    // Broadcast update to WebSocket subscribers
+    broadcastRouteUpdate(routeNum, {
+      route: {
+        route: routeNum,
+        name: routeDetails.name,
+        name_tc: routeDetails.name_tc,
+      },
+      stops: stopsWithETA,
+      totalStops: allStops.length,
+      stopsWithData: stopsWithETA.filter(s => s.wait_sec !== null && s.wait_sec !== undefined).length
+    });
   } catch (error) {
     console.error('Error fetching route details:', error.message);
     res.status(500).json({ error: 'Failed to fetch route details' });
@@ -562,10 +605,46 @@ app.use((err, req, res, next) => {
 // ============================================================
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+
+// WebSocket event handlers
+io.on('connection', (socket) => {
+  console.log(`[WebSocket] Client connected: ${socket.id}`);
+
+  // Subscribe to route updates
+  socket.on('subscribe', (routeNum) => {
+    if (!routeSubscribers[routeNum]) {
+      routeSubscribers[routeNum] = new Set();
+    }
+    routeSubscribers[routeNum].add(socket.id);
+    console.log(`[WebSocket] Client ${socket.id} subscribed to route ${routeNum}`);
+    socket.join(`route:${routeNum}`);
+    socket.emit('subscribed', { route: routeNum });
+  });
+
+  // Unsubscribe from route updates
+  socket.on('unsubscribe', (routeNum) => {
+    if (routeSubscribers[routeNum]) {
+      routeSubscribers[routeNum].delete(socket.id);
+    }
+    console.log(`[WebSocket] Client ${socket.id} unsubscribed from route ${routeNum}`);
+    socket.leave(`route:${routeNum}`);
+  });
+
+  // Disconnect handler
+  socket.on('disconnect', () => {
+    console.log(`[WebSocket] Client disconnected: ${socket.id}`);
+    // Clean up subscriptions
+    Object.keys(routeSubscribers).forEach(route => {
+      routeSubscribers[route].delete(socket.id);
+    });
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`🚀 HK Bus API Server running on port ${PORT}`);
   console.log(`   Database: ${process.env.DB_HOST || 'postgres-db.hk-bus.svc.cluster.local'}`);
   console.log(`   API: http://localhost:${PORT}/api/health`);
+  console.log(`   WebSocket: ws://localhost:${PORT}`);
 });
 
 // Graceful shutdown

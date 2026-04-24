@@ -35,11 +35,45 @@ pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
 });
 
+// API Response Cache with TTL
+class APICache {
+  constructor(ttlMs = 15000) { // 15 second TTL
+    this.cache = new Map();
+    this.ttlMs = ttlMs;
+  }
+
+  set(key, value) {
+    this.cache.set(key, {
+      value,
+      expiresAt: Date.now() + this.ttlMs
+    });
+  }
+
+  get(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return entry.value;
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+const apiCache = new APICache(15000); // 15-second TTL matching collection interval
+
 // Track API statistics
 let stats = {
   totalFetched: 0,
   totalInserted: 0,
   totalErrors: 0,
+  totalCacheHits: 0,
   lastUpdate: null,
   routeErrors: {},
 };
@@ -49,6 +83,16 @@ let stats = {
  */
 async function getStopsForRoute(routeNum, limit = 30, direction = 'outbound') {
   try {
+    const cacheKey = `stops:${routeNum}:${direction}`;
+    
+    // Check cache first
+    const cached = apiCache.get(cacheKey);
+    if (cached) {
+      console.log(`      ✓ Cache hit for Route ${routeNum}(${direction}) - ${cached.length} stops`);
+      stats.totalCacheHits++;
+      return cached;
+    }
+    
     // Use service_type 1 for all routes (covers complete routes)
     const serviceType = 1;
 
@@ -63,7 +107,9 @@ async function getStopsForRoute(routeNum, limit = 30, direction = 'outbound') {
       // Limit to specified number of stops to avoid rate limiting
       const stops = response.data.data.slice(0, limit);
       if (stops.length > 0) {
-        console.log(`      ✓ Got ${stops.length} stops for Route ${routeNum}(${direction})`);
+        console.log(`      ✓ Fetched ${stops.length} stops for Route ${routeNum}(${direction})`);
+        // Cache the result
+        apiCache.set(cacheKey, stops);
       }
       return stops;
     }
@@ -79,6 +125,15 @@ async function getStopsForRoute(routeNum, limit = 30, direction = 'outbound') {
  */
 async function getETA(stopId, routeNum, serviceType = 1, direction = 'O') {
   try {
+    const cacheKey = `eta:${stopId}:${routeNum}:${direction}`;
+    
+    // Check cache first
+    const cached = apiCache.get(cacheKey);
+    if (cached) {
+      stats.totalCacheHits++;
+      return cached;
+    }
+    
     // KMB ETA endpoint requires: /eta/{stop_id}/{route}/{service_type}
     const response = await axios.get(
       `${KMB_API_BASE}/eta/${stopId}/${routeNum}/${serviceType}`,
@@ -86,7 +141,10 @@ async function getETA(stopId, routeNum, serviceType = 1, direction = 'O') {
     );
 
     if (response.data && response.data.data && response.data.data.length > 0) {
-      return response.data.data; // Return array of ETA objects
+      const data = response.data.data; // Return array of ETA objects
+      // Cache the result
+      apiCache.set(cacheKey, data);
+      return data;
     }
   } catch (error) {
     // Log only on first few errors to avoid spam; comment out after debugging
