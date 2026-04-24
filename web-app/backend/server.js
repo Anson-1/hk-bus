@@ -428,22 +428,23 @@ app.get('/api/route/:routeNum', async (req, res) => {
     let direction = 'I';
     let selectedServiceType = null;
 
-    // Try inbound first with service_type 1 (complete route)
+    // Try outbound first with service_type 1 (complete route)
+    // For 91M, outbound is PO LAM→DIAMOND HILL (the main direction)
     try {
       stopsResponse = await axios.get(
-        `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
+        `${KMB_API_BASE}/route-stop/${routeNum}/outbound/1`,
         { timeout: 5000 }
       );
       selectedServiceType = '1';
-      direction = 'I';
+      direction = 'O';
     } catch (e) {
-      // If inbound fails, try outbound
+      // If outbound fails, try inbound
       try {
         stopsResponse = await axios.get(
-          `${KMB_API_BASE}/route-stop/${routeNum}/outbound/1`,
+          `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
           { timeout: 5000 }
         );
-        direction = 'O';
+        direction = 'I';
         selectedServiceType = '1';
       } catch (e2) {
         // If both fail, return empty
@@ -473,7 +474,8 @@ app.get('/api/route/:routeNum', async (req, res) => {
 
     const allStops = stopsResponse.data.data;
 
-    // Get ETA data for each stop from database (use most recent 2 minutes for accuracy)
+    // Get ETA data for each stop from database (use most recent 90 seconds for real-time accuracy)
+    // Reduced from 2 minutes to 90 seconds now that eta-fetcher only collects next bus
     const query = `
       SELECT DISTINCT
         raw.stop_id,
@@ -484,7 +486,7 @@ app.get('/api/route/:routeNum', async (req, res) => {
       FROM eta_raw raw
       WHERE raw.route = $1
         AND raw.dir = $2
-        AND raw.fetched_at > NOW() - INTERVAL '2 minutes'
+        AND raw.fetched_at > NOW() - INTERVAL '90 seconds'
       GROUP BY raw.stop_id
     `;
 

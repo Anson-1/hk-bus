@@ -168,14 +168,14 @@ async function fetchAndPersistETAs() {
             const etas = await getETA(stopId, routeNum, serviceType, dir);
             
             if (etas.length > 0) {
-              // Process each ETA entry (usually multiple per stop)
-              for (const eta of etas) {
-                const waitSec = calculateWaitSeconds(eta.eta);
-                const delayFlag = (eta.rmk_en && eta.rmk_en.toLowerCase().includes('delay')) || false;
+              // Only process the NEXT bus (first ETA), not future buses
+              // The KMB API returns multiple future ETAs, but for tracking we only need the next one
+              const nextEta = etas[0];
+              const waitSec = calculateWaitSeconds(nextEta.eta);
+              const delayFlag = (nextEta.rmk_en && nextEta.rmk_en.toLowerCase().includes('delay')) || false;
 
-                await insertETA(routeNum, dirCode, stopId, waitSec, delayFlag);
-                stats.totalFetched++;
-              }
+              await insertETA(routeNum, dirCode, stopId, waitSec, delayFlag);
+              stats.totalFetched++;
             }
           } catch (error) {
             console.warn(`    ⚠ Error fetching ETA for stop ${stopId}: ${error.message}`);
