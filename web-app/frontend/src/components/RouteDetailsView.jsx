@@ -24,7 +24,6 @@ function RouteDetailsView({ routeNum }) {
   useEffect(() => {
     const fetchRouteDetails = async () => {
       try {
-        setLoading(true);
         setError(null);
         
         // Fetch route details and all stops with ETAs
@@ -40,7 +39,17 @@ function RouteDetailsView({ routeNum }) {
     };
 
     if (routeNum) {
+      // Fetch immediately on first load
+      setLoading(true);
       fetchRouteDetails();
+      
+      // Set up polling to refresh every 15 seconds
+      const interval = setInterval(() => {
+        fetchRouteDetails();
+      }, 15000); // 15 seconds matches eta-fetcher collection interval
+      
+      // Cleanup interval on unmount or route change
+      return () => clearInterval(interval);
     }
   }, [routeNum]);
 
