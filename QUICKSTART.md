@@ -1,201 +1,129 @@
 # Quick Start Guide
 
-Get the HK Bus tracker running in 5 minutes on your local Kubernetes cluster.
+Get HK Bus tracker running in 5 minutes.
 
 ---
 
 ## Prerequisites
 
-✅ **macOS with Docker Desktop**
-- Kubernetes enabled in Docker Desktop settings
-- `kubectl` configured for `docker-desktop` context
+✅ Docker Desktop (Kubernetes enabled)
+✅ kubectl installed
+✅ `kubectl config current-context` shows `docker-desktop`
 
 ```bash
 # Verify
-kubectl config current-context    # Should output: docker-desktop
-kubectl get nodes                  # Should show 1 Ready node
+kubectl get nodes
 ```
 
 ---
 
-## Step 1: Clone & Navigate
+## Step 1: Port Forward
+
+Open **two terminals**:
+
+**Terminal 1** (Web App):
+```bash
+kubectl port-forward -n hk-bus svc/hk-bus-web 8080:80
+```
+
+**Terminal 2** (Grafana):
+```bash
+kubectl port-forward -n hk-bus svc/grafana 3000:3000
+```
+
+---
+
+## Step 2: Open Browser
 
 ```bash
-git clone https://github.com/Anson-1/hk-bus.git
-cd hk-bus
+open http://localhost:8080
 ```
 
 ---
 
-## Step 2: Check Kubernetes Services
+## Step 3: Search Route 91M
 
-The system is already deployed. Verify all services are running:
-
-```bash
-kubectl get pods -n hk-bus
-```
-
-Expected output:
-```
-NAME                           READY   STATUS    RESTARTS
-hk-bus-web-58d77965ff-7hlqf   1/1     Running   0
-hk-bus-api-xxxx-yyyy           1/1     Running   0
-eta-fetcher-xxx-yyy            1/1     Running   0
-postgres-0                      1/1     Running   0
-```
-
----
-
-## Step 3: Port Forward Services
-
-Open **two terminal tabs** and run:
-
-**Tab 1** (Web Frontend):
-```bash
-kubectl port-forward -n hk-bus svc/hk-bus-web 3000:80
-```
-
-**Tab 2** (Backend API + WebSocket):
-```bash
-kubectl port-forward -n hk-bus svc/hk-bus-api 3001:3001
-```
-
----
-
-## Step 4: Open Web App
-
-**Browser**: http://localhost:3000
-
----
-
-## Step 5: Search Route 91M
-
-1. Type `91M` in the search box
-2. Click 🔍 search button
-3. Wait 1-2 seconds
+Type `91M` in search box → Click search
 
 ---
 
 ## Expected Result
 
 ```
-Route 91M
-PO LAM - DIAMOND HILL STATION
+Route 91M - PO LAM to DIAMOND HILL
 
-Upcoming Stops (29)
-1. PO LAM BUS TERMINUS ⏱️ 0 min (1 sample)
-2. YAN KING ROAD, METRO CITY ⏱️ 0 min (1 sample)
-3. KING LAM ESTATE ⏱️ 1 min (1 sample)
-...
-6. HANG HAU STATION ⏱️ 6 min (1 sample)
-...
-13. H.K.U.S.T. (SOUTH) ⏱️ 9 min (1 sample)
-...
-29 stops total, all with real-time ETA data
+Upcoming Stops (29):
+  1. PO LAM BUS TERMINUS - 0 min (1 sample)
+  2. YAN KING ROAD - 0 min (1 sample)
+  3. KING LAM ESTATE - 1 min (1 sample)
+  ...
+  6. HANG HAU STATION - 6 min (1 sample)
+  ...
+  13. H.K.U.S.T. (SOUTH) - 9 min (1 sample)
+  ...
+  29. DIAMOND HILL STATION - 21 min (1 sample)
 ```
 
-The map shows all 29 stops as markers. **Data updates automatically via WebSocket when new ETAs arrive** (every 15 seconds).
+**Map** shows all 29 stops as markers.
+
+Data updates automatically every 15 seconds via WebSocket (no manual refresh).
 
 ---
 
-## Real-Time Updates
-
-The frontend automatically updates when new data arrives **without manual refresh**:
-- ✅ ETA times update
-- ✅ Stop list refreshes
-- ✅ Map markers update
-- ✅ No polling, no delay - instant push updates via WebSocket
-
----
-
-## Verify Data Collection
+## Verify It's Working
 
 ```bash
-# Check eta-fetcher logs with cache stats
+# Check all pods are running
+kubectl get pods -n hk-bus
+
+# View eta-fetcher logs (collecting data)
 kubectl logs -n hk-bus -l app=eta-fetcher --tail=10
 
-# Check database record count
-kubectl exec -it -n hk-bus postgres-0 -- \
-  psql -U postgres -d hk_bus -c "SELECT COUNT(*) FROM eta_raw WHERE route='91M';"
-
-# Check WebSocket connections in backend logs
-kubectl logs -n hk-bus -l app=hk-bus-api --tail=10
-```
-
-Expected output from eta-fetcher:
-```
-✓ Fetched 29 stops for Route 91M(outbound)
-✓ Cache hit for Route 91M(outbound) - 29 stops
-✓ Cache hit for Route 91M(outbound) - 29 stops
-✅ Fetch cycle complete - Cache Hits: 15, API Calls: 8
-```
-
-Expected output from backend (WebSocket):
-```
-[WebSocket] Client abc123 connected
-[WebSocket] Client abc123 subscribed to route 91M
-[WebSocket] Client abc123 unsubscribed from route 91M
+# Check database
+kubectl exec -it postgres-0 -n hk-bus -- \
+  psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM eta_raw WHERE route='91M';"
 ```
 
 ---
 
-## Performance Features
+## Grafana Dashboard
 
-### ⚡ WebSocket Real-Time Updates
-- Frontend receives push updates instead of polling
-- ~97% faster than HTTP polling (500ms vs 15s)
-- Instant ETA updates when data changes
+Open: http://localhost:3000 (admin / admin)
 
-### 🚀 API Response Caching
-- eta-fetcher caches KMB API responses (15-sec TTL)
-- 80% reduction in external API calls
-- Faster data collection
-
-### ⚙️ Database Optimization
-- Strategic indexes on `eta_raw` table
-- Query time <100ms (vs 1s+ before)
-- Connection pooling for better throughput
+Available dashboards:
+- Route 91M - Real-time Analytics (live metrics)
+- (Others may show "No data" if only testing 91M)
 
 ---
 
-## Troubleshooting
+## Common Issues
 
-**No data showing?**
-- Ensure both port-forwards are active (Step 3)
-- Check `kubectl get pods -n hk-bus` - all Running?
-- Reload page (Cmd+R)
+| Issue | Solution |
+|-------|----------|
+| Port 8080 already in use | `lsof -i :8080` then kill PID |
+| "Failed to fetch route details" | Restart: `kubectl rollout restart deployment/hk-bus-web -n hk-bus` |
+| No data showing | Wait 15-30 sec for first data collection cycle |
+| Page doesn't auto-update | Check browser console for WebSocket errors |
 
-**Page doesn't update automatically?**
-- Check browser console for WebSocket connection errors
-- Verify backend is running: `kubectl get pods -n hk-bus`
-- Try restarting the backend: `kubectl rollout restart deployment/hk-bus-api -n hk-bus`
+---
 
-**Only 12 stops showing?**
-- Services may be outdated. Restart:
+## Troubleshoot Pods
+
 ```bash
-kubectl rollout restart deployment/hk-bus-api -n hk-bus
-kubectl rollout restart deployment/eta-fetcher -n hk-bus
-```
+# Check pod status
+kubectl describe pod <pod-name> -n hk-bus
 
-**Different ETAs each refresh?**
-- Normal! Real data updates every 15 seconds from KMB API.
+# View logs
+kubectl logs <pod-name> -n hk-bus --tail=50
+
+# Restart pod
+kubectl rollout restart deployment/<deployment-name> -n hk-bus
+```
 
 ---
 
-## Architecture
+## Next Steps
 
-For detailed technical architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-**Quick Overview**:
-```
-KMB API → eta-fetcher (with caching) → PostgreSQL (with indexes) 
-→ Backend API (WebSocket) → Frontend (Socket.io) → Browser
-```
-
-Real-time flow:
-1. eta-fetcher polls KMB API every 15 seconds (with cache)
-2. Stores data in PostgreSQL
-3. Backend API broadcasts updates via WebSocket
-4. Frontend receives push updates instantly
-5. No polling, no delay, no manual refresh needed
-
+- See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
+- See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for production setup
+- See [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) for full system architecture

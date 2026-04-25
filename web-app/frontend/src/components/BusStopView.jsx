@@ -51,7 +51,7 @@ function BusStopView({ stop, etas, loading }) {
                 )}
               </div>
               <div className="eta-time">
-                ⏱️ Wait time: {Math.round(eta.wait_sec / 60)} min
+                ⏱️ Wait time: {Math.max(0, Math.round(eta.wait_sec / 60))} min
               </div>
               {eta.sample_count && (
                 <div className="eta-samples">

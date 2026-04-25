@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: hk-bus-api
-          image: ansonhui123/hk-bus-api:v9
+          image: ansonhui123/hk-bus-api:v30
           imagePullPolicy: Always
           ports:
             - containerPort: 3001

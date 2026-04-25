@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
       - name: generator
-        image: ansonhui123/hk-bus-eta-fetcher:v2
+        image: ansonhui123/hk-bus-eta-fetcher:v15-fix
         command: ["node", "-e", "
 const { Pool } = require('pg');
 const pool = new Pool({

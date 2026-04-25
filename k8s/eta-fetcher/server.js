@@ -10,6 +10,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+const { Kafka, logLevel } = require('kafkajs');
 require('dotenv').config();
 
 // Initialize Express app for health checks
@@ -26,7 +27,7 @@ const MONITORED_ROUTES = ['91M'];
 const pool = new Pool({
   host: process.env.DB_HOST || 'postgres-db.hk-bus.svc.cluster.local',
   port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'hk_bus',
+  database: process.env.DB_NAME || 'hkbus',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
 });
@@ -34,6 +35,43 @@ const pool = new Pool({
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
 });
+
+// Kafka Producer for streaming ETA events
+let kafka;
+let producer;
+let kafkaReady = false;
+
+async function initKafka() {
+  try {
+    const brokers = (process.env.KAFKA_BROKERS || 'kafka-broker.hk-bus.svc.cluster.local:9092').split(',');
+    console.log(`🔌 Connecting to Kafka brokers: ${brokers.join(', ')}`);
+    
+    kafka = new Kafka({
+      clientId: 'eta-fetcher',
+      brokers,
+      logLevel: logLevel.WARN,
+    });
+    
+    producer = kafka.producer({
+      idempotent: true,
+      maxInFlightRequests: 5,
+      compression: 1, // gzip
+    });
+    
+    await producer.connect();
+    kafkaReady = true;
+    console.log('✅ Kafka producer connected');
+  } catch (error) {
+    console.error('❌ Kafka connection failed:', error.message);
+    kafkaReady = false;
+  }
+}
+
+async function disconnectKafka() {
+  if (producer) {
+    await producer.disconnect();
+  }
+}
 
 // API Response Cache with TTL
 class APICache {
@@ -72,8 +110,10 @@ const apiCache = new APICache(15000); // 15-second TTL matching collection inter
 let stats = {
   totalFetched: 0,
   totalInserted: 0,
+  totalKafkaPublished: 0,
   totalErrors: 0,
   totalCacheHits: 0,
+  kafkaErrors: 0,
   lastUpdate: null,
   routeErrors: {},
 };
@@ -174,20 +214,69 @@ function calculateWaitSeconds(etaString) {
 
 /**
  * Insert ETA record into PostgreSQL
+ * Stores raw KMB API response data to match existing schema
  */
-async function insertETA(routeNum, direction, stopId, waitSec, delayFlag) {
+async function insertETA(routeNum, direction, stopId, etaData) {
   try {
     const query = `
-      INSERT INTO eta_raw (route, dir, stop_id, wait_sec, delay_flag, fetched_at)
-      VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+      INSERT INTO eta_raw (route, dir, stop, eta_seq, eta, rmk_en, data_timestamp, fetched_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
       ON CONFLICT DO NOTHING
     `;
 
-    await pool.query(query, [routeNum, direction, stopId, waitSec, delayFlag]);
+    await pool.query(query, [
+      routeNum,
+      direction,
+      stopId,
+      etaData.eta_seq || 1,
+      etaData.eta || null,
+      etaData.rmk_en || null,
+      etaData.data_timestamp || new Date().toISOString()
+    ]);
     stats.totalInserted++;
+    
+    // Also emit to Kafka for real-time streaming pipeline
+    if (kafkaReady) {
+      const waitSec = calculateWaitSeconds(etaData.eta);
+      const delayFlag = (etaData.rmk_en && etaData.rmk_en.toLowerCase().includes('delay')) || false;
+      await publishToKafka(routeNum, direction, stopId, waitSec, delayFlag);
+    }
   } catch (error) {
     console.error(`  ✗ DB Error: ${error.message}`);
     stats.totalErrors++;
+  }
+}
+
+/**
+ * Publish ETA event to Kafka topic
+ */
+async function publishToKafka(routeNum, direction, stopId, waitSec, delayFlag) {
+  try {
+    const event = {
+      route: routeNum,
+      direction: direction,
+      stopId: stopId,
+      waitSeconds: waitSec,
+      delayFlag: delayFlag,
+      timestamp: new Date().toISOString(),
+    };
+    
+    await producer.send({
+      topic: 'eta-events',
+      messages: [
+        {
+          key: `${routeNum}:${direction}:${stopId}`,
+          value: JSON.stringify(event),
+          timestamp: Date.now().toString(),
+        }
+      ],
+      timeout: 5000,
+    });
+    
+    stats.totalKafkaPublished++;
+  } catch (error) {
+    console.error(`  ✗ Kafka publish error: ${error.message}`);
+    stats.kafkaErrors++;
   }
 }
 
@@ -229,10 +318,8 @@ async function fetchAndPersistETAs() {
               // Only process the NEXT bus (first ETA), not future buses
               // The KMB API returns multiple future ETAs, but for tracking we only need the next one
               const nextEta = etas[0];
-              const waitSec = calculateWaitSeconds(nextEta.eta);
-              const delayFlag = (nextEta.rmk_en && nextEta.rmk_en.toLowerCase().includes('delay')) || false;
 
-              await insertETA(routeNum, dirCode, stopId, waitSec, delayFlag);
+              await insertETA(routeNum, dirCode, stopId, nextEta);
               stats.totalFetched++;
             }
           } catch (error) {
@@ -253,7 +340,7 @@ async function fetchAndPersistETAs() {
   }
 
   stats.lastUpdate = new Date().toISOString();
-  console.log(`✅ Fetch cycle complete - Processed: ${stats.totalFetched}, Inserted: ${stats.totalInserted}, Errors: ${stats.totalErrors}`);
+  console.log(`✅ Fetch cycle complete - Fetched: ${stats.totalFetched}, DB: ${stats.totalInserted}, Kafka: ${stats.totalKafkaPublished}, Errors: ${stats.totalErrors}`);
 }
 
 /**
@@ -277,9 +364,12 @@ async function cleanupOldData() {
  * Main loop - runs fetch cycle repeatedly
  */
 async function main() {
-  console.log('🚀 HK Bus ETA Fetcher Service Starting');
+  console.log('🚀 HK Bus ETA Fetcher Service Starting (v16)');
   console.log(`📍 Monitoring ${MONITORED_ROUTES.length} routes`);
   console.log(`📊 Database: ${process.env.DB_HOST || 'postgres-db.hk-bus.svc.cluster.local'}`);
+
+  // Initialize Kafka connection
+  await initKafka();
 
   // Test database connection
   try {
@@ -359,6 +449,19 @@ module.exports = {
 
 // Run if executed directly
 if (require.main === module) {
+  // Setup graceful shutdown
+  process.on('SIGTERM', async () => {
+    console.log('\n⏹️  Shutting down gracefully...');
+    await disconnectKafka();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', async () => {
+    console.log('\n⏹️  Shutting down gracefully...');
+    await disconnectKafka();
+    process.exit(0);
+  });
+
   // Start Express server for health checks
   app.listen(PORT, () => {
     console.log(`🏥 Health check server listening on port ${PORT}`);

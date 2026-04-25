@@ -27,8 +27,8 @@ function RouteDetailsView({ routeNum }) {
       try {
         setError(null);
         
-        // Fetch route details and all stops with ETAs
-        const response = await axios.get(`${API_BASE}/route/${routeNum}`);
+        // Fetch route details with LIVE ETA data (direct from KMB API, no caching)
+        const response = await axios.get(`${API_BASE}/route-live/${routeNum}`);
         setRouteInfo(response.data.route);
         setStops(response.data.stops || []);
       } catch (err) {
@@ -74,12 +74,18 @@ function RouteDetailsView({ routeNum }) {
         console.log('[WebSocket] Disconnected');
       });
 
+      // Poll live ETA data every 10 seconds for real-time updates
+      const pollInterval = setInterval(() => {
+        fetchRouteDetails();
+      }, 10000);
+
       // Cleanup on unmount or route change
       return () => {
         if (routeNum) {
           socket.emit('unsubscribe', routeNum);
         }
         socket.disconnect();
+        clearInterval(pollInterval);
       };
     }
   }, [routeNum]);
@@ -152,7 +158,7 @@ function RouteDetailsView({ routeNum }) {
                     {stop.wait_sec !== null && stop.wait_sec !== undefined ? (
                       <>
                         <div className="eta-time">
-                          ⏱️ {Math.round(stop.wait_sec / 60)} min
+                          ⏱️ {Math.max(0, Math.round(stop.wait_sec / 60))} min
                         </div>
                         {stop.sample_count && (
                           <div className="eta-samples">
@@ -205,7 +211,7 @@ function RouteDetailsView({ routeNum }) {
                         <strong>{idx + 1}. {stop.name_en}</strong><br/>
                         {stop.name_tc}<br/>
                         {stop.wait_sec !== null ? (
-                          <>⏱️ {Math.round(stop.wait_sec / 60)} min</>
+                          <>⏱️ {Math.max(0, Math.round(stop.wait_sec / 60))} min</>
                         ) : (
                           <>No ETA</>
                         )}

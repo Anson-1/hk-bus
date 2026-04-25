@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: eta-fetcher
-        image: ansonhui123/hk-bus-eta-fetcher:v2
+        image: ansonhui123/hk-bus-eta-fetcher:v15-fix
         imagePullPolicy: Always
         resources:
           requests:

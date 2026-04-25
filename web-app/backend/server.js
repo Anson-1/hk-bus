@@ -18,6 +18,10 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// Serve frontend static files from public directory
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'public')));
+
 // PostgreSQL connection pool
 const pool = new Pool({
   host: process.env.DB_HOST || 'postgres-db.hk-bus.svc.cluster.local',
@@ -244,15 +248,16 @@ app.get('/api/eta/:stopId', async (req, res) => {
       SELECT
         route,
         dir,
-        ROUND(AVG(wait_sec)::numeric, 0) AS wait_sec,
+        ROUND(AVG(EXTRACT(EPOCH FROM (eta - NOW())))::numeric, 0) AS wait_sec,
         COUNT(*) as sample_count,
         MAX(fetched_at)::timestamp AS window_start,
-        CASE WHEN AVG(CASE WHEN delay_flag THEN 1 ELSE 0 END) > 0.5 THEN true ELSE false END AS is_delayed
+        (MAX(rmk_en) ILIKE '%delay%') AS is_delayed
       FROM eta_raw
-      WHERE stop_id = $1
+      WHERE stop = $1
         AND fetched_at > NOW() - INTERVAL '5 minutes'
         AND route IS NOT NULL 
         AND route != ''
+        AND eta IS NOT NULL
       GROUP BY route, dir
       ORDER BY window_start DESC, route ASC
       LIMIT 50
@@ -510,24 +515,25 @@ app.get('/api/route/:routeNum', async (req, res) => {
     const allStops = stopsResponse.data.data;
 
     // Get ETA data for each stop from database (latest value only)
-    // Optimized query using indexes: idx_eta_raw_route_dir_stop, idx_eta_raw_stop_id_fetched
+    // Calculate wait time in seconds: (eta_timestamp - now)
     const query = `
-      SELECT DISTINCT ON (raw.stop_id)
-        raw.stop_id,
-        raw.wait_sec,
+      SELECT DISTINCT ON (raw.stop)
+        raw.stop,
+        EXTRACT(EPOCH FROM (raw.eta - NOW()))::integer as wait_sec,
         1 as sample_count,
         raw.fetched_at::timestamp AS window_start,
-        raw.delay_flag AS is_delayed
+        (raw.rmk_en ILIKE '%delay%') AS is_delayed
       FROM eta_raw raw
       WHERE raw.route = $1
         AND raw.dir = $2
-      ORDER BY raw.stop_id, raw.fetched_at DESC
+        AND raw.eta IS NOT NULL
+      ORDER BY raw.stop, raw.fetched_at DESC
     `;
 
     const etaResult = await pool.query(query, [routeNum, direction]);
     const etaMap = {};
     etaResult.rows.forEach(row => {
-      etaMap[row.stop_id] = row;
+      etaMap[row.stop] = row;
     });
 
     // Fetch stop details with limited concurrency (max 5 parallel)
@@ -589,6 +595,297 @@ app.get('/api/route/:routeNum', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch route details' });
   }
 });
+
+/**
+ * GET /api/route-live/:routeNum
+ * Get all stops for a route with REAL-TIME ETA data (direct from KMB API, no caching)
+ * This endpoint proxies directly to KMB API for live updates matching the official app
+ */
+app.get('/api/route-live/:routeNum', async (req, res) => {
+  try {
+    const { routeNum } = req.params;
+
+    // Try outbound first, then inbound
+    let stopsResponse = null;
+    let direction = 'O';
+
+    try {
+      stopsResponse = await axios.get(
+        `${KMB_API_BASE}/route-stop/${routeNum}/outbound/1`,
+        { timeout: 5000 }
+      );
+      direction = 'O';
+    } catch (e) {
+      try {
+        stopsResponse = await axios.get(
+          `${KMB_API_BASE}/route-stop/${routeNum}/inbound/1`,
+          { timeout: 5000 }
+        );
+        direction = 'I';
+      } catch (e2) {
+        return res.json({
+          route: {
+            route: routeNum,
+            name: 'Route not found',
+            name_tc: '路線不存在',
+          },
+          stops: []
+        });
+      }
+    }
+
+    const routeDetails = await getRouteDetails(routeNum, direction);
+
+    if (!stopsResponse.data || !stopsResponse.data.data) {
+      return res.json({
+        route: {
+          route: routeNum,
+          name: routeDetails.name,
+          name_tc: routeDetails.name_tc,
+        },
+        stops: []
+      });
+    }
+
+    const allStops = stopsResponse.data.data;
+    const stopList = allStops.slice(0, 35);
+
+    // Fetch LIVE ETA data for each stop directly from KMB API (no database caching)
+    const stopsWithLiveETA = await Promise.all(
+      stopList.map(async (stop) => {
+        try {
+          const stopDetails = await getStopDetails(stop.stop);
+          
+          // Get live ETA from KMB API
+          let waitSec = null;
+          try {
+            const etaResponse = await axios.get(
+              `${KMB_API_BASE}/eta/${stop.stop}/${routeNum}/1`,
+              { timeout: 5000 }
+            );
+            
+            if (etaResponse.data && etaResponse.data.data && etaResponse.data.data.length > 0) {
+              const firstEta = etaResponse.data.data[0];
+              const liveETA = firstEta.eta;
+              
+              // Calculate wait time in seconds from ETA timestamp
+              const etaTime = new Date(liveETA);
+              const now = new Date();
+              waitSec = Math.max(0, Math.round((etaTime - now) / 1000));
+            }
+          } catch (etaErr) {
+            // If ETA fetch fails, waitSec stays null
+          }
+
+          return {
+            stop_id: stop.stop,
+            sequence: stop.seq,
+            name: stopDetails.name_en || `Stop ${stop.seq}`,
+            name_en: stopDetails.name_en || '',
+            name_tc: stopDetails.name_tc || '',
+            lat: stopDetails.lat,
+            lng: stopDetails.long,
+            wait_sec: waitSec,
+            is_live: true,
+          };
+        } catch (err) {
+          // Return stop with no ETA if fetch fails
+          return {
+            stop_id: stop.stop,
+            sequence: stop.seq,
+            name: `Stop ${stop.seq}`,
+            name_en: '',
+            name_tc: '',
+            lat: null,
+            lng: null,
+            wait_sec: null,
+            is_live: true,
+          };
+        }
+      })
+    );
+
+    res.json({
+      route: {
+        route: routeNum,
+        name: routeDetails.name,
+        name_tc: routeDetails.name_tc,
+      },
+      stops: stopsWithLiveETA,
+      totalStops: allStops.length,
+      stopsWithData: stopsWithLiveETA.filter(s => s.wait_sec !== null && s.wait_sec !== undefined).length,
+      timestamp: new Date().toISOString(),
+      note: 'Live ETA data - real-time from KMB API, no caching'
+    });
+  } catch (error) {
+    console.error('Error fetching live route details:', error.message);
+    res.status(500).json({ error: 'Failed to fetch live route details' });
+  }
+});
+
+// ============================================================
+// ANALYTICS ENDPOINTS (v29)
+// ============================================================
+
+/**
+ * GET /api/analytics/summary - Daily summary statistics
+ */
+app.get('/api/analytics/summary', async (req, res) => {
+  try {
+    const { route = '91M', direction, limit = 10 } = req.query;
+    
+    let query = `
+      SELECT route, direction, analysis_date,
+             avg_wait_sec, min_wait_sec, max_wait_sec, p95_wait_sec,
+             reliability_pct, on_time_pct, sample_count
+      FROM eta_analytics
+      WHERE route = $1
+    `;
+    
+    const params = [route];
+    
+    if (direction) {
+      query += ` AND direction = $${params.length + 1}`;
+      params.push(direction);
+    }
+    
+    query += ` ORDER BY analysis_date DESC, hour_of_day
+      LIMIT $${params.length + 1}`;
+    params.push(parseInt(limit) || 10);
+    
+    const result = await pool.query(query, params);
+    res.json({
+      route,
+      direction: direction || 'all',
+      records: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error('Analytics summary error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/analytics/delays - Stops with highest delays
+ */
+app.get('/api/analytics/delays', async (req, res) => {
+  try {
+    const { route = '91M', limit = 10, days = 1 } = req.query;
+    
+    const query = `
+      SELECT stop_id, route, direction,
+             AVG(p95_wait_sec) as avg_p95,
+             AVG(avg_wait_sec) as avg_wait,
+             COUNT(*) as occurrences
+      FROM eta_analytics
+      WHERE route = $1
+        AND analysis_date >= NOW() - INTERVAL '${parseInt(days)} days'
+        AND p95_wait_sec > 600
+      GROUP BY stop_id, route, direction
+      ORDER BY avg_p95 DESC
+      LIMIT $2
+    `;
+    
+    const result = await pool.query(query, [route, parseInt(limit) || 10]);
+    res.json({
+      route,
+      delayed_stops: result.rows.map(row => ({
+        stopId: row.stop_id,
+        direction: row.direction,
+        p95WaitSeconds: Math.round(row.avg_p95),
+        avgWaitSeconds: Math.round(row.avg_wait),
+        delayedCount: row.occurrences,
+      })),
+    });
+  } catch (error) {
+    console.error('Analytics delays error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/analytics/peak-hours - Busiest times by hour
+ */
+app.get('/api/analytics/peak-hours', async (req, res) => {
+  try {
+    const { route = '91M', limit = 24 } = req.query;
+    
+    const query = `
+      SELECT hour_of_day, day_of_week,
+             ROUND(AVG(avg_wait_sec)::numeric, 1) as avg_wait,
+             ROUND(AVG(sample_count)::numeric, 0) as avg_samples,
+             COUNT(*) as data_points
+      FROM eta_analytics
+      WHERE route = $1
+      GROUP BY hour_of_day, day_of_week
+      ORDER BY avg_wait DESC, hour_of_day
+      LIMIT $2
+    `;
+    
+    const result = await pool.query(query, [route, parseInt(limit) || 24]);
+    res.json({
+      route,
+      peak_hours: result.rows.map(row => ({
+        hourOfDay: row.hour_of_day,
+        dayOfWeek: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][row.day_of_week] || 'Unknown',
+        avgWaitSeconds: Math.round(row.avg_wait),
+        avgSamples: Math.round(row.avg_samples),
+        dataPoints: row.data_points,
+      })),
+    });
+  } catch (error) {
+    console.error('Analytics peak hours error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/analytics/reliability - Service reliability metrics
+ */
+app.get('/api/analytics/reliability', async (req, res) => {
+  try {
+    const { route = '91M', direction } = req.query;
+    
+    let query = `
+      SELECT direction, stop_id,
+             ROUND(AVG(on_time_pct)::numeric, 1) as reliability_pct,
+             ROUND(AVG(avg_wait_sec)::numeric, 1) as avg_wait,
+             COUNT(*) as measurements
+      FROM eta_analytics
+      WHERE route = $1
+    `;
+    
+    const params = [route];
+    
+    if (direction) {
+      query += ` AND direction = $2`;
+      params.push(direction);
+    }
+    
+    query += `
+      GROUP BY direction, stop_id
+      ORDER BY reliability_pct DESC, stop_id
+    `;
+    
+    const result = await pool.query(query, params);
+    res.json({
+      route,
+      direction: direction || 'all',
+      reliability_data: result.rows.map(row => ({
+        stopId: row.stop_id,
+        direction: row.direction,
+        reliabilityPercent: parseFloat(row.reliability_pct),
+        avgWaitSeconds: Math.round(row.avg_wait),
+        measurements: row.measurements,
+      })),
+    });
+  } catch (error) {
+    console.error('Analytics reliability error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================
 
 app.use((req, res) => {
@@ -604,7 +901,7 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ============================================================
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 // WebSocket event handlers
 io.on('connection', (socket) => {
@@ -637,6 +934,16 @@ io.on('connection', (socket) => {
     Object.keys(routeSubscribers).forEach(route => {
       routeSubscribers[route].delete(socket.id);
     });
+  });
+});
+
+// SPA fallback: Serve index.html for all unmatched routes (must be AFTER all API routes)
+app.get('*', (req, res) => {
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      res.status(500).json({ error: 'Could not serve index.html' });
+    }
   });
 });
 
