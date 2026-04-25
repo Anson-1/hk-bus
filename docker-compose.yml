@@ -1,36 +1,156 @@
-version: '3.8'
-
 services:
-  backend:
-    build:
-      context: ./web-app/backend
-      dockerfile: Dockerfile
-    ports:
-      - "3001:3001"
+  # PostgreSQL Database
+  postgres-db:
+    image: postgres:15
+    container_name: hk-bus-postgres
     environment:
-      DB_HOST: postgres-db.hk-bus.svc.cluster.local
+      POSTGRES_DB: hk_bus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./k8s/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - hk-bus-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper (required by Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: hk-bus-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - hk-bus-network
+
+  # Kafka Message Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: hk-bus-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - hk-bus-network
+    healthcheck:
+      test: kafka-broker-api-versions --bootstrap-server localhost:9092
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API Server
+  backend:
+    image: ansonhui123/hk-bus-api:v30
+    container_name: hk-bus-backend
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: postgres-db
       DB_PORT: 5432
       DB_NAME: hk_bus
       DB_USER: postgres
       DB_PASSWORD: postgres
-      PORT: 3001
-      NODE_ENV: development
     depends_on:
-      - postgres
+      postgres-db:
+        condition: service_healthy
     networks:
       - hk-bus-network
+    restart: unless-stopped
 
-  frontend:
-    build:
-      context: ./web-app/frontend
-      dockerfile: Dockerfile
+  # Web App (Frontend + Backend on Port 3000)
+  web-app:
+    image: ansonhui123/hk-bus-web:v16
+    container_name: hk-bus-web
     ports:
       - "3000:3000"
+    environment:
+      DB_HOST: postgres-db
+      DB_PORT: 5432
+      DB_NAME: hk_bus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      API_URL: http://backend:5000
+      PORT: 3000
+      NODE_ENV: production
     depends_on:
-      - backend
+      postgres-db:
+        condition: service_healthy
     networks:
       - hk-bus-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ETA Fetcher (Real-time data collection)
+  eta-fetcher:
+    image: ansonhui123/hk-bus-eta-fetcher:v15-fix
+    container_name: hk-bus-eta-fetcher
+    environment:
+      DB_HOST: postgres-db
+      DB_PORT: 5432
+      DB_NAME: hk_bus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      KAFKA_HOST: kafka:9092
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+
+  # Grafana Dashboards
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: hk-bus-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./k8s/grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   hk-bus-network:
     driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
