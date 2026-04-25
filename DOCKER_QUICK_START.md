@@ -7,6 +7,7 @@
 **Mac/Windows:**
 - Download and install [Docker Desktop](https://www.docker.com/products/docker-desktop)
 - Open Docker Desktop app
+- ⚠️ **Windows**: Make sure WSL2 is enabled (Docker prompts during install)
 
 **Linux:**
 ```bash
@@ -68,6 +69,11 @@ docker compose down -v && docker compose up -d
 ```
 
 ## Troubleshooting
+
+**Windows: "Command not found"?**
+- Use **PowerShell** instead of old Command Prompt
+- Right-click → "Open PowerShell here"
+- Then run: `docker compose up -d`
 
 **"Port 3000 already in use?"**
 ```bash
