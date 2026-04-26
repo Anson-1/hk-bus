@@ -20,11 +20,16 @@ docker compose up -d
 ```
 
 ### Access Services
+
+**Web Services (open in browser):**
 | Service | URL | Purpose |
 |---------|-----|---------|
 | **Web App** | http://localhost:3000 | Route 91M real-time tracker |
 | **Grafana** | http://localhost:3001 | Dashboards (admin/admin) |
-| **Database** | localhost:5432 | PostgreSQL (postgres/postgres) |
+
+**Database Connection (use database client):**
+- PostgreSQL: `localhost:5432` | User: `postgres` | Password: `postgres`
+- *Note: Use tools like DBeaver, pgAdmin, or `psql` CLI to connect*
 
 ✅ Everything starts automatically in ~1 minute!
 
@@ -144,6 +149,36 @@ After running for 24+ hours, Grafana shows:
 4. **Weather-ETA Correlation** - How weather impacts bus delays
 
 *Note: Full correlation analysis appears after 7+ days of data collection*
+
+---
+
+## 📋 Accessing the Database
+
+### View data with psql CLI
+
+Connect to the PostgreSQL container:
+```bash
+docker compose exec postgres-db psql -U postgres -d hk_bus
+```
+
+Once connected (prompt shows `hk_bus=#`), try these commands:
+
+```sql
+\dt                              -- List all tables
+\d weather_hourly                -- Show weather table structure
+SELECT COUNT(*) FROM weather_hourly;  -- Total weather records
+SELECT * FROM weather_hourly ORDER BY recorded_at DESC LIMIT 5;  -- Latest weather data
+\q                               -- Exit
+```
+
+### Useful psql cheat sheet
+| Command | Purpose |
+|---------|---------|
+| `\dt` | List all tables |
+| `\d {table_name}` | Show table structure |
+| `SELECT * FROM {table} LIMIT 10;` | View 10 rows |
+| `SELECT COUNT(*) FROM {table};` | Count records |
+| `\q` | Quit psql |
 
 ---
 
