@@ -5,10 +5,10 @@ FROM node:18-alpine AS frontend-builder
 
 WORKDIR /frontend
 
-COPY web-app/frontend/package*.json ./
+COPY frontend/package*.json ./
 RUN npm install
 
-COPY web-app/frontend ./
+COPY frontend ./
 RUN npm run build
 
 # Stage 2: Build backend with frontend assets
@@ -17,11 +17,11 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Copy backend dependencies
-COPY web-app/backend/package*.json ./
+COPY backend/package*.json ./
 RUN npm install --production
 
 # Copy backend source
-COPY web-app/backend/server.js .
+COPY backend/server.js .
 
 # Copy frontend build artifacts from stage 1
 COPY --from=frontend-builder /frontend/dist ./public

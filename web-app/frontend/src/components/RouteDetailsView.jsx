@@ -74,10 +74,10 @@ function RouteDetailsView({ routeNum }) {
         console.log('[WebSocket] Disconnected');
       });
 
-      // Poll live ETA data every 10 seconds for real-time updates
+      // Poll live ETA data every 1 second for real-time updates
       const pollInterval = setInterval(() => {
         fetchRouteDetails();
-      }, 10000);
+      }, 1000);
 
       // Cleanup on unmount or route change
       return () => {
@@ -90,20 +90,9 @@ function RouteDetailsView({ routeNum }) {
     }
   }, [routeNum]);
 
-  // Get user location for map
+  // Default map center to Tuen Mun (Route 91M starting point)
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation([position.coords.latitude, position.coords.longitude]);
-        },
-        (err) => {
-          console.warn('Could not get user location:', err);
-          // Default to Hong Kong center if location unavailable
-          setUserLocation([22.3193, 114.1694]);
-        }
-      );
-    }
+    setUserLocation([22.3119, 113.9738]); // Tuen Mun coordinates
   }, []);
 
   if (loading) {
@@ -190,13 +179,6 @@ function RouteDetailsView({ routeNum }) {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
               
-              {/* User location marker if available */}
-              {userLocation && (
-                <Marker position={userLocation}>
-                  <Popup>Your Location</Popup>
-                </Marker>
-              )}
-
               {/* Route stops - use real coordinates */}
               {stops.map((stop, idx) => {
                 const lat = stop.lat ? parseFloat(stop.lat) : null;
