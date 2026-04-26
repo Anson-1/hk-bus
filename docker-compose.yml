@@ -1,5 +1,5 @@
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database - stores weather data and analytics
   postgres-db:
     image: postgres:15
     container_name: hk-bus-postgres
@@ -20,61 +20,29 @@ services:
       timeout: 5s
       retries: 5
 
-  # Zookeeper (required by Kafka)
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: hk-bus-zookeeper
+  # Weather Fetcher - collects hourly weather data from HK government API
+  weather-fetcher:
+    image: ansonhui123/hk-bus-weather-fetcher:v1
+    container_name: hk-bus-weather-fetcher
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    networks:
-      - hk-bus-network
-
-  # Kafka Message Broker
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: hk-bus-kafka
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    networks:
-      - hk-bus-network
-    healthcheck:
-      test: kafka-broker-api-versions --bootstrap-server localhost:9092
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Backend API Server
-  backend:
-    image: ansonhui123/hk-bus-api:v30
-    container_name: hk-bus-backend
-    ports:
-      - "5000:5000"
-    environment:
-      DB_HOST: postgres-db
-      DB_PORT: 5432
-      DB_NAME: hk_bus
-      DB_USER: postgres
-      DB_PASSWORD: postgres
+      POSTGRES_HOST: postgres-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: hk_bus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     depends_on:
       postgres-db:
         condition: service_healthy
     networks:
       - hk-bus-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Web App (Frontend + Backend on Port 3000)
+  # Web App - frontend interface
   web-app:
     image: ansonhui123/hk-bus-web:v16
     container_name: hk-bus-web
@@ -86,7 +54,6 @@ services:
       DB_NAME: hk_bus
       DB_USER: postgres
       DB_PASSWORD: postgres
-      API_URL: http://backend:5000
       PORT: 3000
       NODE_ENV: production
     depends_on:
@@ -101,27 +68,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ETA Fetcher (Real-time data collection)
-  eta-fetcher:
-    image: ansonhui123/hk-bus-eta-fetcher:v15-fix
-    container_name: hk-bus-eta-fetcher
-    environment:
-      DB_HOST: postgres-db
-      DB_PORT: 5432
-      DB_NAME: hk_bus
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      KAFKA_HOST: kafka:9092
-    depends_on:
-      postgres-db:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    networks:
-      - hk-bus-network
-    restart: unless-stopped
-
-  # Grafana Dashboards
+  # Grafana - dashboards and data visualization
   grafana:
     image: grafana/grafana:10.4.0
     container_name: hk-bus-grafana

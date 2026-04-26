@@ -668,6 +668,49 @@ data:
       "version": 1,
       "weekStart": ""
     }
+  weather-dashboard.json: |
+    {
+      "uid": "route-91m-weather",
+      "title": "🌦️ Route 91M - Weather Data Collection",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": { "from": "now-7d", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "🌡️ Temperature Trend (Last 7 days)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "datasource": "PostgreSQL",
+          "targets": [{
+            "rawSql": "SELECT timestamp as time, ROUND(temp_c_avg::numeric, 1) as \"Temperature (°C)\" FROM weather_hourly ORDER BY timestamp DESC LIMIT 168",
+            "format": "time_series"
+          }]
+        },
+        {
+          "id": 2,
+          "title": "🌧️ Rainfall - Tuen Mun District (Last 7 days)",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "datasource": "PostgreSQL",
+          "targets": [{
+            "rawSql": "SELECT timestamp as time, rainfall_tuen_mun_mm as \"Rainfall (mm)\" FROM weather_hourly ORDER BY timestamp DESC LIMIT 168",
+            "format": "time_series"
+          }]
+        },
+        {
+          "id": 3,
+          "title": "📋 Weather Data Table (Last 50 records)",
+          "type": "table",
+          "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+          "datasource": "PostgreSQL",
+          "targets": [{
+            "rawSql": "SELECT TO_CHAR(timestamp, 'YYYY-MM-DD HH24:00') as \"Timestamp\", ROUND(temp_c_avg::numeric, 1) as \"Temp (°C)\", ROUND(rainfall_tuen_mun_mm::numeric, 2) as \"Rain (mm)\", ROUND(humidity_pct::numeric, 0) as \"Humidity (%)\", weather_condition as \"Condition\" FROM weather_hourly ORDER BY timestamp DESC LIMIT 50",
+            "format": "table"
+          }]
+        }
+      ]
+    }
 ---
 apiVersion: apps/v1
 kind: Deployment
