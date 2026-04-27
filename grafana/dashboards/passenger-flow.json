@@ -1,0 +1,232 @@
+{
+  "title": "HK Cross-Border Passenger Flow & Holiday Patterns",
+  "uid": "hk-passenger-flow",
+  "tags": ["passenger", "holidays", "spark", "cross-border"],
+  "timezone": "Asia/Hong_Kong",
+  "refresh": "1h",
+  "schemaVersion": 36,
+  "time": { "from": "2021-01-01T00:00:00.000Z", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Passengers Since 2021",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 5, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "unit": "locale",
+          "decimals": 0
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT SUM(total) FROM passenger_daily_summary WHERE direction = 'Arrival';",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Avg Passengers on Public Holidays",
+      "type": "stat",
+      "gridPos": { "x": 5, "y": 0, "w": 5, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "orange" },
+          "unit": "locale",
+          "decimals": 0
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT ROUND(AVG(total)) FROM passenger_daily_summary WHERE day_type = 'Public Holiday' AND total > 0;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Avg Passengers on Weekdays",
+      "type": "stat",
+      "gridPos": { "x": 10, "y": 0, "w": 5, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "unit": "locale",
+          "decimals": 0
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT ROUND(AVG(total)) FROM passenger_daily_summary WHERE day_type = 'Weekday' AND total > 0;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Holiday Surge Multiplier vs Weekday",
+      "type": "stat",
+      "gridPos": { "x": 15, "y": 0, "w": 5, "h": 4 },
+      "datasource": "PostgreSQL",
+      "description": "How many times busier are control points on Public Holidays vs normal weekdays?",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "unit": "none",
+          "decimals": 2
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT ROUND(AVG(CASE WHEN day_type = 'Public Holiday' THEN total END)::numeric / NULLIF(AVG(CASE WHEN day_type = 'Weekday' THEN total END), 0), 2) FROM passenger_daily_summary WHERE total > 0;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Average Daily Passengers by Day Type (All Control Points)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 4, "w": 10, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Key insight: Public Holidays generate 2.5x more cross-border traffic than weekdays. Processed by Spark MapReduce from IMMD data (2021–2026).",
+      "options": {
+        "orientation": "vertical",
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "barWidth": 0.6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 80 },
+          "unit": "locale"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT day_type, ROUND(AVG(total)) AS avg_passengers FROM passenger_daily_summary WHERE total > 0 GROUP BY day_type ORDER BY avg_passengers DESC;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Top Control Points by Total Volume (2021–2026)",
+      "type": "barchart",
+      "gridPos": { "x": 10, "y": 4, "w": 14, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Cumulative passenger count per border crossing since 2021.",
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "barWidth": 0.6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 80 },
+          "unit": "locale"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT control_point, SUM(total) AS total_passengers FROM passenger_daily_summary WHERE total > 0 GROUP BY control_point ORDER BY total_passengers DESC LIMIT 10;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "Monthly Passenger Trend — Top 4 Control Points",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Monthly total arrivals at the 4 busiest control points since 2021. Shows COVID recovery and post-pandemic surge.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 8 },
+          "color": { "mode": "palette-classic" },
+          "unit": "locale"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT DATE_TRUNC('month', date) AS time, control_point AS metric, SUM(total) AS value FROM passenger_daily_summary WHERE control_point IN ('Lo Wu', 'Lok Ma Chau Spur Line', 'Airport', 'Shenzhen Bay') AND direction = 'Arrival' GROUP BY DATE_TRUNC('month', date), control_point ORDER BY time;",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Arrivals vs Departures — Total by Direction",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": "PostgreSQL",
+      "description": "Monthly arrivals vs departures across all control points combined.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "mode": "palette-classic" },
+          "unit": "locale"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT DATE_TRUNC('month', date) AS time, direction AS metric, SUM(total) AS value FROM passenger_daily_summary GROUP BY DATE_TRUNC('month', date), direction ORDER BY time;",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 9,
+      "title": "Visitor Breakdown on Public Holidays",
+      "type": "piechart",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": "PostgreSQL",
+      "description": "Who crosses the border on public holidays? Breakdown by HK Residents, Mainland Visitors, and Other Visitors.",
+      "options": {
+        "pieType": "donut",
+        "legend": { "displayMode": "table", "placement": "right", "values": ["percent", "value"] },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "locale" }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT 'HK Residents' AS type, SUM(hk_residents) AS total FROM passenger_daily_summary WHERE day_type = 'Public Holiday' UNION ALL SELECT 'Mainland Visitors', SUM(mainland_visitors) FROM passenger_daily_summary WHERE day_type = 'Public Holiday' UNION ALL SELECT 'Other Visitors', SUM(other_visitors) FROM passenger_daily_summary WHERE day_type = 'Public Holiday';",
+        "format": "table"
+      }]
+    }
+  ]
+}

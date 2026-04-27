@@ -1,0 +1,254 @@
+{
+  "title": "HK Traffic Accident Insights",
+  "uid": "hk-accident-insights",
+  "tags": ["accidents", "traffic", "spark"],
+  "timezone": "Asia/Hong_Kong",
+  "refresh": "",
+  "schemaVersion": 36,
+  "time": { "from": "now-1y", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Accidents in 2024",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] }
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = 2024 AND district IS NOT NULL;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Fatal Accidents in 2024",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "dark-red" },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = 2024 AND district IS NOT NULL AND severity = 'Fatal';",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Serious Injuries in 2024",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "orange" },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = 2024 AND district IS NOT NULL AND severity = 'Serious';",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Wet Road Accidents in 2024",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT SUM(count) FROM accident_summary WHERE road_condition = 'Wet';",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Top 10 Most Dangerous Districts (2024)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 10 },
+      "datasource": "PostgreSQL",
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "barWidth": 0.7,
+        "groupWidth": 0.7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 80 }
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT district, SUM(count) AS total_accidents FROM accident_summary WHERE year = 2024 AND district IS NOT NULL GROUP BY district ORDER BY total_accidents DESC LIMIT 10;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Road Condition Impact: Wet vs Dry (2024)",
+      "type": "barchart",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Number of accidents by road surface condition and injury severity. Shows how rain increases accident risk.",
+      "options": {
+        "orientation": "vertical",
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" },
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "stacking": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 80 }
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT road_condition, severity, SUM(count) AS count FROM accident_summary WHERE road_condition IS NOT NULL AND road_condition != 'Unknown' GROUP BY road_condition, severity ORDER BY road_condition, severity;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "Accident Type Breakdown (2024)",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 14, "w": 8, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Distribution of accident types: Vehicle/Pedestrian, Vehicle/Vehicle, Vehicle/Object, Vehicle/None.",
+      "options": {
+        "pieType": "donut",
+        "legend": { "displayMode": "table", "placement": "right", "values": ["percent", "value"] },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT accident_type, SUM(count) AS total FROM accident_summary WHERE accident_type IS NOT NULL GROUP BY accident_type ORDER BY total DESC;",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Fatal Accidents Trend 2021–2024 (by Collision Type)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 14, "w": 16, "h": 10 },
+      "datasource": "PostgreSQL",
+      "description": "Year-over-year fatal accident count by collision type, processed by Spark MapReduce from government CSVs.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT make_date(year, 6, 15) AS time, accident_type AS metric, count AS value FROM accident_summary WHERE year IS NOT NULL AND severity = 'Fatal' AND accident_type IS NOT NULL ORDER BY year;",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 9,
+      "title": "All Accidents Trend 2021–2024 (Total)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+      "datasource": "PostgreSQL",
+      "description": "Total accident count year-over-year across all collision types and severity levels.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 20 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT make_date(year, 6, 15) AS time, severity AS metric, SUM(count) AS value FROM accident_summary WHERE year IS NOT NULL AND accident_type IS NOT NULL AND severity != 'All' GROUP BY year, severity ORDER BY year;",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 10,
+      "title": "Accidents by Hour of Day (2024)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 },
+      "datasource": "PostgreSQL",
+      "description": "Total accident count per hour of day in 2024. Peak hours are morning and evening rush (0700-0900, 1700-1900). Processed by Spark MapReduce from Transport Dept CSV f2.5.",
+      "options": {
+        "orientation": "vertical",
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" },
+        "barWidth": 0.8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "semi-dark-orange" },
+          "custom": { "fillOpacity": 80 },
+          "unit": "short"
+        }
+      },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT hour_of_day AS hour, SUM(count) AS accidents FROM accident_summary WHERE hour_of_day IS NOT NULL GROUP BY hour_of_day ORDER BY hour_of_day;",
+        "format": "table"
+      }]
+    }
+  ]
+}

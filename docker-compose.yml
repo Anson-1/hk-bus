@@ -20,9 +20,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # Weather Fetcher - collects hourly weather data from HK government API
+  # Data Collectors - weather (hourly), KMB ETA (30s), road speed (2min)
   weather-fetcher:
-    image: ansonhui123/hk-bus-weather-fetcher:v1
+    build:
+      context: ./functions/weather-fetcher
     container_name: hk-bus-weather-fetcher
     environment:
       POSTGRES_HOST: postgres-db
