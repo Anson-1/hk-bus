@@ -146,15 +146,37 @@ function timeComponents(hktStr) {
 
 async function loadKMBRoutes() {
   const data = await get(`${KMB_BASE}/route`, {}, 30000);
-  if (data.data && Array.isArray(data.data)) {
-    kmbRoutes = [...new Set(data.data.map(r => r.route))];
+  const rows = (data.data && Array.isArray(data.data)) ? data.data : null;
+
+  if (rows) {
+    kmbRoutes = [...new Set(rows.map(r => r.route))];
     console.log(`[KMB] Loaded ${kmbRoutes.length} routes`);
+    for (const r of rows) {
+      try {
+        await db.query(`
+          INSERT INTO kmb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (route, bound) DO NOTHING
+        `, [r.route, r.bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+      } catch {}
+    }
+    console.log(`[KMB] Routes upserted into kmb.routes`);
   } else {
     await sleep(5000);
     const retry = await get(`${KMB_BASE}/route`, {}, 30000);
     if (retry.data && Array.isArray(retry.data)) {
       kmbRoutes = [...new Set(retry.data.map(r => r.route))];
       console.log(`[KMB] Loaded ${kmbRoutes.length} routes (retry)`);
+      for (const r of retry.data) {
+        try {
+          await db.query(`
+            INSERT INTO kmb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (route, bound) DO NOTHING
+          `, [r.route, r.bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+        } catch {}
+      }
+      console.log(`[KMB] Routes upserted into kmb.routes (retry)`);
     } else if (kmbRoutes.length === 0) {
       kmbRoutes = ['1', '2', '5C'];
       console.warn('[KMB] API unavailable, using fallback routes');
