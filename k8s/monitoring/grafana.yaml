@@ -1,0 +1,322 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: hk-bus
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: PostgreSQL
+        type: postgres
+        uid: postgres
+        url: postgres-db.hk-bus.svc.cluster.local:5432
+        database: hkbus
+        user: postgres
+        secureJsonData:
+          password: postgres
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1500
+        isDefault: false
+
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://prometheus.hk-bus.svc.cluster.local:9090
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: hk-bus
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name: hk-bus
+        folder: HK Bus Tracker
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-eta
+  namespace: hk-bus
+data:
+  eta-analytics.json: |
+    {
+      "title": "ETA Analytics",
+      "uid": "eta-analytics",
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "route",
+            "label": "Route",
+            "type": "query",
+            "datasource": { "type": "postgres", "uid": "postgres" },
+            "definition": "SELECT DISTINCT route FROM eta_realtime ORDER BY route",
+            "query": "SELECT DISTINCT route FROM eta_realtime ORDER BY route",
+            "refresh": 2,
+            "sort": 1
+          },
+          {
+            "name": "dir",
+            "label": "Direction",
+            "type": "custom",
+            "query": "O,I",
+            "options": [
+              { "value": "O", "text": "Outbound" },
+              { "value": "I", "text": "Inbound" }
+            ],
+            "current": { "value": "O", "text": "Outbound" }
+          },
+          {
+            "name": "stop",
+            "label": "Stop",
+            "type": "query",
+            "datasource": { "type": "postgres", "uid": "postgres" },
+            "definition": "SELECT e.stop_id AS __value, COALESCE(s.name_en, e.stop_id) AS __text FROM (SELECT DISTINCT stop_id FROM eta_realtime WHERE route = '${route}' AND dir = '${dir}') e LEFT JOIN stops s ON e.stop_id = s.stop_id ORDER BY __text",
+            "query": "SELECT e.stop_id AS __value, COALESCE(s.name_en, e.stop_id) AS __text FROM (SELECT DISTINCT stop_id FROM eta_realtime WHERE route = '${route}' AND dir = '${dir}') e LEFT JOIN stops s ON e.stop_id = s.stop_id ORDER BY __text",
+            "refresh": 2,
+            "sort": 0
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Routes Tracked",
+          "type": "stat",
+          "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT COUNT(DISTINCT route) AS value FROM eta_realtime",
+            "format": "table"
+          }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" } }
+        },
+        {
+          "id": 2,
+          "title": "Stops Tracked (selected route)",
+          "type": "stat",
+          "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT COUNT(DISTINCT stop_id) AS value FROM eta_realtime WHERE route = '$route' AND dir = '$dir'",
+            "format": "table"
+          }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" } }
+        },
+        {
+          "id": 3,
+          "title": "Total Data Points Collected",
+          "type": "stat",
+          "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT COUNT(*) AS value FROM eta_realtime",
+            "format": "table"
+          }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "short" } }
+        },
+        {
+          "id": 4,
+          "title": "Wait Time History — $route ($stop)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 4, "w": 24, "h": 10 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT window_start AS \"time\", ROUND((avg_wait_sec / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime WHERE route = '$route' AND dir = '$dir' AND stop_id = '$stop' AND $__timeFilter(window_start) ORDER BY window_start",
+            "format": "time_series"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "color": { "mode": "palette-classic" },
+              "custom": { "lineWidth": 2, "fillOpacity": 10 }
+            }
+          },
+          "options": { "tooltip": { "mode": "single" } }
+        },
+        {
+          "id": 5,
+          "title": "Current Avg Wait — All Stops on $route ($dir)",
+          "type": "bargauge",
+          "gridPos": { "x": 0, "y": 14, "w": 24, "h": 10 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT DISTINCT ON (e.stop_id) COALESCE(s.name_en, e.stop_id) AS \"Stop\", ROUND((e.avg_wait_sec / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime e LEFT JOIN stops s ON e.stop_id = s.stop_id WHERE e.route = '$route' AND e.dir = '$dir' ORDER BY e.stop_id, e.window_start DESC",
+            "format": "table"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "red", "value": 20 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "orientation": "horizontal",
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "displayMode": "gradient"
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-system
+  namespace: hk-bus
+data:
+  system-health.json: |
+    {
+      "title": "System Health",
+      "uid": "system-health",
+      "timezone": "browser",
+      "refresh": "15s",
+      "time": { "from": "now-30m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Pod Restarts",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"hk-bus\"}[5m])",
+            "legendFormat": "{{pod}}"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } } }
+        },
+        {
+          "id": 2,
+          "title": "Services Up",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "up{job=\"hk-bus-pods\"}",
+            "legendFormat": "{{app}}"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+              ],
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            }
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+        },
+        {
+          "id": 3,
+          "title": "Kafka Messages Consumed (eta-aggregator)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{
+            "rawSql": "SELECT window_start AS \"time\", SUM(sample_count) AS \"Samples Written\" FROM eta_realtime WHERE $__timeFilter(window_start) GROUP BY window_start ORDER BY window_start",
+            "format": "time_series"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } } }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: hk-bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.4.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "hkbus123"
+        - name: GF_SECURITY_ADMIN_USER
+          value: "admin"
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: "false"
+        volumeMounts:
+        - name: datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboard-providers
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboard-eta
+          mountPath: /var/lib/grafana/dashboards/eta-analytics.json
+          subPath: eta-analytics.json
+        - name: dashboard-system
+          mountPath: /var/lib/grafana/dashboards/system-health.json
+          subPath: system-health.json
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      volumes:
+      - name: datasources
+        configMap:
+          name: grafana-datasources
+      - name: dashboard-providers
+        configMap:
+          name: grafana-dashboard-providers
+      - name: dashboard-eta
+        configMap:
+          name: grafana-dashboard-eta
+      - name: dashboard-system
+        configMap:
+          name: grafana-dashboard-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-monitoring
+  namespace: hk-bus
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: 3000
+    nodePort: 30400
+  type: NodePort

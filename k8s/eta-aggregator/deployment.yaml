@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eta-aggregator
+  namespace: hk-bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eta-aggregator
+  template:
+    metadata:
+      labels:
+        app: eta-aggregator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3003"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: eta-aggregator
+        image: ansonhui123/hk-bus-eta-aggregator:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3003
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: KAFKA_BROKERS
+          value: "kafka-broker.hk-bus.svc.cluster.local:9092"
+        - name: FLUSH_INTERVAL_MS
+          value: "60000"
+        - name: NODE_ENV
+          value: "production"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eta-aggregator
+  namespace: hk-bus
+spec:
+  selector:
+    app: eta-aggregator
+  ports:
+  - name: http
+    port: 3003
+    targetPort: 3003
+  type: ClusterIP

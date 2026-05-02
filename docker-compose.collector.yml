@@ -1,0 +1,41 @@
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: hk-bus-postgres
+    environment:
+      POSTGRES_DB: hkbus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hkbus"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  eta-fetcher:
+    build:
+      context: ./k8s/eta-fetcher
+    container_name: hk-bus-eta-fetcher
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

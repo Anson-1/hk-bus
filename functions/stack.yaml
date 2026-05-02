@@ -1,0 +1,15 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+functions:
+  compute-analytics:
+    lang: node18
+    handler: ./compute-analytics
+    image: ansonhui123/compute-analytics:latest
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres

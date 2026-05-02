@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: hk-bus-api
+    static_configs:
+      - targets: ['web-app:3000']
+    metrics_path: /metrics
+
+  - job_name: eta-aggregator
+    static_configs:
+      - targets: ['eta-aggregator:3003']
+    metrics_path: /metrics
+
+  - job_name: eta-fetcher
+    static_configs:
+      - targets: ['eta-fetcher:3002']
+    metrics_path: /metrics
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']

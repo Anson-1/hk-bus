@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hk-bus-ingress
+  namespace: hk-bus
+  annotations:
+    # Nginx Ingress Controller (replaces AWS API Gateway)
+    kubernetes.io/ingress.class: nginx
+
+    # WebSocket support for Socket.io real-time updates
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/websocket-services: "hk-bus-api"
+
+    # Increase body size limit for API responses
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      # Backend API — all /api/* requests go to the Express server
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: hk-bus-api
+            port:
+              number: 3000
+
+      # WebSocket — Socket.io connection for real-time ETA push
+      - path: /socket.io/
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: hk-bus-api
+            port:
+              number: 3000
+
+      # Everything else — serve the React frontend (bundled into the backend image)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hk-bus-api
+            port:
+              number: 3000

@@ -1,99 +1,204 @@
 services:
-  # PostgreSQL Database - stores weather data and analytics
-  postgres-db:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  postgres:
     image: postgres:15
     container_name: hk-bus-postgres
     environment:
-      POSTGRES_DB: hk_bus
+      POSTGRES_DB: hkbus
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./k8s/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./k8s/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hkbus"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - hk-bus-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # Data Collectors - weather (hourly), KMB ETA (30s), road speed (2min)
-  weather-fetcher:
-    build:
-      context: ./functions/weather-fetcher
-    container_name: hk-bus-weather-fetcher
+  # ── Kafka (KRaft mode — no Zookeeper needed) ─────────────────
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: hk-bus-kafka
     environment:
-      POSTGRES_HOST: postgres-db
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: hk_bus
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - hk-bus-network
+
+  # ── ETA Fetcher (polls KMB API → Kafka + PostgreSQL) ─────────
+  eta-fetcher:
+    build:
+      context: ./k8s/eta-fetcher
+    container_name: hk-bus-eta-fetcher
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      KAFKA_BROKERS: kafka:9092
+      POLL_INTERVAL: 15000
+      NODE_ENV: production
     depends_on:
-      postgres-db:
+      postgres:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     networks:
       - hk-bus-network
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
-  # Web App - frontend interface
+  # ── ETA Aggregator (Kafka consumer → eta_realtime table) ─────
+  eta-aggregator:
+    build:
+      context: ./k8s/eta-aggregator
+    container_name: hk-bus-eta-aggregator
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      KAFKA_BROKERS: kafka:9092
+      FLUSH_INTERVAL_MS: 60000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3003/health',(r)=>{process.exit(r.statusCode===200?0:1)})\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+
+  # ── Web App (frontend + backend API) ─────────────────────────
   web-app:
-    image: ansonhui123/hk-bus-web:v16
+    build:
+      context: ./web-app
     container_name: hk-bus-web
     ports:
       - "3000:3000"
     environment:
-      DB_HOST: postgres-db
-      DB_PORT: 5432
-      DB_NAME: hk_bus
-      DB_USER: postgres
-      DB_PASSWORD: postgres
       PORT: 3000
       NODE_ENV: production
+      ETA_AGGREGATOR_URL: http://eta-aggregator:3003
+      REDIS_URL: redis://redis:6379
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
     depends_on:
-      postgres-db:
+      eta-aggregator:
         condition: service_healthy
-    networks:
-      - hk-bus-network
-    restart: unless-stopped
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health',(r)=>{process.exit(r.statusCode===200?0:1)})\""]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
 
-  # Grafana - dashboards and data visualization
+  # ── Redis (ElastiCache replacement) ──────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hk-bus-redis
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+
+  # ── Prometheus (CloudWatch replacement) ──────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: hk-bus-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+
+  # ── Redis Exporter (exposes Redis metrics to Prometheus) ─────
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: hk-bus-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    networks:
+      - hk-bus-network
+    restart: unless-stopped
+
+  # ── Grafana (QuickSight replacement) ─────────────────────────
   grafana:
     image: grafana/grafana:10.4.0
     container_name: hk-bus-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: hkbus123
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboard-files:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
     ports:
       - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_SECURITY_ADMIN_USER: admin
-      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./k8s/grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
-      postgres-db:
-        condition: service_healthy
+      - prometheus
     networks:
       - hk-bus-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 networks:
   hk-bus-network:
@@ -101,4 +206,7 @@ networks:
 
 volumes:
   postgres_data:
+  kafka_data:
+  redis_data:
+  prometheus_data:
   grafana_data:

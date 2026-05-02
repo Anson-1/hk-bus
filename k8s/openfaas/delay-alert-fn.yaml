@@ -1,0 +1,30 @@
+apiVersion: openfaas.com/v1
+kind: Function
+metadata:
+  name: delay-alert
+  namespace: openfaas-fn
+spec:
+  name: delay-alert
+  image: ansonhui123/hk-bus-delay-alerter:latest
+  labels:
+    com.openfaas.scale.min: "0"
+    com.openfaas.scale.max: "5"
+    com.openfaas.scale.zero: "true"
+    com.openfaas.scale.zero-duration: "2m"
+  annotations:
+    topic: eta-events
+  environment:
+    KAFKA_BROKERS: kafka-broker.hk-bus.svc.cluster.local:9092
+    DB_HOST: postgres-db.hk-bus.svc.cluster.local
+    DB_PORT: "5432"
+    DB_NAME: hkbus
+    DB_USER: postgres
+    THRESHOLD_WAIT_SEC: "600"
+  secrets:
+    - postgres-secret
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 128Mi
+    cpu: 200m

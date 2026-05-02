@@ -1,343 +1,201 @@
 # 🚌 HK Bus Real-Time Tracker
 
-**A real-time bus tracking system for Hong Kong KMB Route 91M with live ETA, weather correlation analysis, and interactive dashboards.**
+A cloud-native, event-driven bus tracking system for Hong Kong — built as an open-source reimplementation of an AWS serverless architecture, deployable to Kubernetes.
 
-**Status**: ✅ Production Ready | **Route**: 91M | **Stops**: 29 | **Data**: Real-time (15s updates)
+**Operators**: KMB + Citybus (CTB) | **Updates**: Every 15 s | **Stack**: Kafka · PostgreSQL · Redis · Prometheus · Grafana
 
 ---
 
-## 🚀 Quick Start (60 seconds)
+## AWS → Open-Source Mapping
+
+| AWS Service | Open-Source Replacement | Role in This Project |
+|---|---|---|
+| Kinesis Data Streams | **Apache Kafka 3.7** (KRaft) | ETA event stream between fetcher and aggregator |
+| RDS (PostgreSQL) | **PostgreSQL 15** | Persistent storage for raw ETAs, analytics, alerts |
+| ElastiCache (Redis) | **Redis 7** | 15 s TTL cache for live route data; 24 h TTL for stop details |
+| CloudWatch Metrics | **Prometheus 2.51** | Scrapes metrics from all services every 15 s |
+| QuickSight / CloudWatch Dashboards | **Grafana 10.4** | Three pre-built dashboards with live Prometheus + PostgreSQL data |
+| Lambda (event-triggered) | **delay-alerter service** | Consumes `eta-events` Kafka topic; writes to `delay_alerts` when `rmk_en` signals a delay |
+
+---
+
+## Architecture
+
+```
+ KMB API ──┐
+           ├──► eta-fetcher ──► Kafka (eta-events) ──► eta-aggregator ──► PostgreSQL
+ CTB API ──┘         │                                       │
+                     │                               delay-alerter
+                     ▼
+                PostgreSQL                                   │
+                     │                                       ▼
+             web-app backend ◄── Redis cache          delay_alerts table
+                     │
+                     ▼
+             web-app frontend (React)
+
+ Prometheus ◄── scrapes all services every 15 s
+ Grafana    ◄── queries Prometheus + PostgreSQL
+```
+
+---
+
+## Services
+
+| Service | Port | AWS Equivalent | Description |
+|---|---|---|---|
+| web-app | 3000 | ELB + EC2 | React frontend + Express/Node API |
+| postgres | — | RDS | Raw ETAs, analytics, alerts, stops |
+| kafka | — | Kinesis | Event bus between fetcher and aggregator |
+| redis | 6379 | ElastiCache | Route and stop caching |
+| eta-fetcher | 3002 | Kinesis Producer | Polls KMB + CTB APIs every 15 s, publishes to Kafka |
+| eta-aggregator | 3003 | Kinesis Consumer | Consumes Kafka, writes to PostgreSQL, computes hourly analytics |
+| delay-alerter | 3004 | Lambda | Kafka consumer; inserts delay events to `delay_alerts` |
+| prometheus | 9090 | CloudWatch Metrics | Scrapes all services |
+| grafana | 3001 | QuickSight | Three dashboards (ETA analytics, system health, operator comparison) |
+| redis-exporter | 9121 | — | Exposes Redis metrics to Prometheus |
+
+---
+
+## Quick Start
 
 ### Prerequisites
-- Docker Desktop (with Docker Compose)
-- ~2GB free disk space
+- Docker Desktop (Docker Compose v2)
+- ~3 GB free disk space
 
-### Run Everything
+### Run
+
 ```bash
-git clone <your-repo-url>
+git clone <repo-url>
 cd hk-bus
 docker compose up -d
 ```
 
-### Access Services
+All services start automatically. Allow ~90 s for Kafka to become healthy.
 
-**Web Services (open in browser):**
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Web App** | http://localhost:3000 | Route 91M real-time tracker |
-| **Grafana** | http://localhost:3001 | Dashboards (admin/admin) |
+### Access
 
-**Database Connection (use database client):**
-- PostgreSQL: `localhost:5432` | User: `postgres` | Password: `postgres`
-- *Note: Use tools like DBeaver, pgAdmin, or `psql` CLI to connect*
-
-✅ Everything starts automatically in ~1 minute!
+| URL | Service |
+|---|---|
+| http://localhost:3000 | Web App — search any KMB or Citybus route |
+| http://localhost:3001 | Grafana (admin / hkbus123) |
+| http://localhost:9090 | Prometheus |
 
 ---
 
-## 📊 What You Get
+## Features
 
-### 🌐 Web App (Port 3000)
-- Interactive map of Route 91M
-- Real-time bus locations
-- Live ETAs for all 29 stops
-- Stop details and schedule
+### Web App
+- Search across all KMB and Citybus routes
+- Real-time ETA for every stop on a route (updates every second via polling)
+- Interactive Leaflet map showing stop positions
+- WebSocket subscription for server-push updates
 
-### 📈 Grafana Dashboards (Port 3001)
-- **Route 91M - Weather Analytics**: Temperature, rainfall, humidity trends
-- **Route 91M - Real-time Analytics**: ETA patterns, wait times, traffic analysis
-- Auto-updating every 30 seconds
+### Grafana Dashboards
+1. **ETA Analytics** — Average and P95 wait times per route, sourced from `eta_analytics` table
+2. **System Health** — Prometheus metrics: Kafka lag, Redis memory, API request rates, active routes
+3. **Operator Comparison** — Side-by-side KMB vs CTB route counts, average waits, delay events
 
-### 🗄️ Database (PostgreSQL)
-- Real-time ETA data collection (15s intervals)
-- Hourly weather data from HK government API
-- Historical analytics for trend analysis
-
-### 🌦️ Weather Integration
-- Automatic hourly weather collection (Tuen Mun district)
-- Correlation analysis between weather and bus delays
-- Temperature, rainfall, humidity tracking
+### Data Pipeline
+1. `eta-fetcher` polls KMB ETA Bus API + CTB Open Data API every 15 s
+2. Each ETA event is published to Kafka topic `eta-events`
+3. `eta-aggregator` consumes events, writes to `eta_raw` + `eta_realtime`, computes hourly `eta_analytics`
+4. `delay-alerter` consumes same topic, writes to `delay_alerts` when API response contains a delay remark
+5. `web-app` backend serves live data from PostgreSQL (Redis-cached) to the frontend
 
 ---
 
-## 🏗️ Architecture
+## Kubernetes Deployment
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                  Your Local Machine                      │
-├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  PostgreSQL  │  │    Grafana   │  │  Web App     │  │
-│  │  (Port 5432) │  │  (Port 3001) │  │  (Port 3000) │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│         ↑                ↑                    ↑          │
-│         └────────┬───────┴────────┬──────────┘           │
-│                  │                │                      │
-│          ┌───────▼─────┐  ┌──────▼────────┐            │
-│          │ ETA Fetcher │  │Weather Fetcher│            │
-│          └───────┬─────┘  └──────┬────────┘            │
-│                  │                │                      │
-└──────────────────┼────────────────┼──────────────────────┘
-                   │                │
-                   ▼                ▼
-          ┌──────────────┐  ┌──────────────────┐
-          │  KMB API     │  │ HK Gov API       │
-          │ (Bus ETAs)   │  │ (Weather Data)   │
-          └──────────────┘  └──────────────────┘
-```
-
----
-
-## 📦 Services Included
-
-| Service | Image | Purpose | Status |
-|---------|-------|---------|--------|
-| **PostgreSQL** | `postgres:15` | Data storage | ✅ Official |
-| **Grafana** | `grafana:10.4.0` | Dashboards | ✅ Official |
-| **Web App** | `ansonhui123/hk-bus-web:v16` | Frontend UI | ✅ Your Docker Hub |
-| **Weather Fetcher** | `ansonhui123/hk-bus-weather-fetcher:v1` | Weather collection | ✅ Your Docker Hub |
-
-**Total**: 4 lightweight containers, ~1.5GB total size
-
----
-
-## 🎯 Key Features
-
-✅ **Real-Time Updates**: Bus positions every 15 seconds  
-✅ **Weather Integration**: Hourly weather data with correlation analysis  
-✅ **Smart Caching**: 80% fewer API calls via intelligent caching  
-✅ **Fast Queries**: Database indexes ensure <100ms response times  
-✅ **Live Dashboards**: Grafana auto-refreshes every 30 seconds  
-✅ **Easy Deployment**: One command to run everything  
-
----
-
-## 📝 Common Commands
+Manifests are in `k8s/`. Services have health checks and resource limits.
 
 ```bash
-# View all containers
-docker compose ps
+# Create namespace
+kubectl create namespace hk-bus
 
-# View logs from a service
-docker compose logs -f web-app
-docker compose logs -f grafana
-docker compose logs -f weather-fetcher
+# Apply all manifests
+kubectl apply -f k8s/ -n hk-bus
 
-# Access database
-docker compose exec postgres-db psql -U postgres -d hk_bus -c "SELECT * FROM weather_hourly LIMIT 5;"
+# Check status
+kubectl get pods -n hk-bus
 
-# Stop everything
-docker compose down
-
-# Stop and remove all data (clean slate)
-docker compose down -v
-
-# Restart a specific service
-docker compose restart weather-fetcher
+# Forward web-app to localhost
+kubectl port-forward svc/web-app 3000:3000 -n hk-bus
 ```
 
 ---
 
-## 🌡️ Weather Dashboard Features
-
-After running for 24+ hours, Grafana shows:
-
-1. **Temperature Trend** - 7-day temperature history
-2. **Rainfall Tracking** - Tuen Mun district rainfall (mm)
-3. **Weather Data Table** - Raw readings with timestamps
-4. **Weather-ETA Correlation** - How weather impacts bus delays
-
-*Note: Full correlation analysis appears after 7+ days of data collection*
-
----
-
-## 📋 Accessing the Database
-
-### View data with psql CLI
-
-Connect to the PostgreSQL container:
-```bash
-docker compose exec postgres-db psql -U postgres -d hk_bus
-```
-
-Once connected (prompt shows `hk_bus=#`), try these commands:
-
-```sql
-\dt                              -- List all tables
-\d weather_hourly                -- Show weather table structure
-SELECT COUNT(*) FROM weather_hourly;  -- Total weather records
-SELECT * FROM weather_hourly ORDER BY recorded_at DESC LIMIT 5;  -- Latest weather data
-\q                               -- Exit
-```
-
-### Useful psql cheat sheet
-| Command | Purpose |
-|---------|---------|
-| `\dt` | List all tables |
-| `\d {table_name}` | Show table structure |
-| `SELECT * FROM {table} LIMIT 10;` | View 10 rows |
-| `SELECT COUNT(*) FROM {table};` | Count records |
-| `\q` | Quit psql |
-
----
-
-## 🔧 Technical Details
-
-### Database Schema
-- `weather_hourly` - Hourly weather readings (temperature, rainfall, humidity, condition)
-- `eta_analytics` - Real-time ETA data for each route and stop
-- Indexed queries for fast analysis
-
-### Data Collection
-- **ETA Fetcher**: Runs every 15 seconds (KMB API)
-- **Weather Fetcher**: Runs every hour (HK Government API)
-- Both services auto-restart if they crash
-
-### API Endpoints
-- Web App: http://localhost:3000
-- Grafana API: http://localhost:3001/api
-- Database: Port 5432
-
----
-
-## 📊 Data Storage
-
-```
-PostgreSQL Container (Port 5432)
-├── weather_hourly (new hourly readings)
-├── eta_analytics (real-time bus data)
-├── route_info (static route data)
-└── stop_info (stop coordinates & names)
-```
-
-**Data Retention**: 
-- Weather: 30+ days
-- ETA: 7 days
-- Historical: Archived for analysis
-
----
-
-## 🚨 Troubleshooting
-
-### Services won't start
-```bash
-# Check Docker is running
-docker ps
-
-# View error logs
-docker compose logs
-
-# Clean restart
-docker compose down -v
-docker compose up -d
-```
-
-### Port already in use
-```bash
-# Mac/Linux: Find what's using port
-lsof -i :3000
-# Kill the process
-kill -9 <PID>
-```
-
-### No data in Grafana
-```bash
-# Check weather-fetcher is running
-docker compose ps
-
-# View weather fetcher logs
-docker compose logs weather-fetcher
-
-# Check database has data
-docker compose exec postgres-db psql -U postgres -d hk_bus -c "SELECT COUNT(*) FROM weather_hourly;"
-```
-
-### Database locked error
-```bash
-# Usually resolves on its own, but if persistent:
-docker compose restart postgres-db
-```
-
----
-
-## 🎓 For Teammates
-
-To set up on your machine:
-
-```bash
-# 1. Clone the repo
-git clone <your-repo-url>
-cd hk-bus
-
-# 2. Start everything (Docker pulls images automatically)
-docker compose up -d
-
-# 3. Open in browser
-open http://localhost:3000  # Web App
-open http://localhost:3001  # Grafana (admin/admin)
-
-# 4. Done! 🎉
-```
-
-No installation needed - Docker handles everything!
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 hk-bus/
-├── docker-compose.yml          # Main config (edit here for settings)
-├── README.md                   # You are here
+├── docker-compose.yml
 ├── k8s/
-│   ├── postgres/
-│   │   └── init.sql           # Database schema
-│   └── grafana/
-│       └── provisioning/       # Grafana config
-├── functions/
-│   └── weather-fetcher/        # Weather data collection service
-├── grafana/
-│   └── dashboards/             # Grafana dashboard JSON files
-└── web-app/                    # Frontend web application
+│   ├── postgres/init.sql          # Schema: eta_raw, eta_realtime, eta_analytics, stops, delay_alerts
+│   ├── eta-fetcher/               # Node.js — KMB + CTB poller → Kafka + PostgreSQL
+│   ├── eta-aggregator/            # Node.js — Kafka consumer → PostgreSQL + analytics
+│   ├── delay-alerter/             # Node.js — Kafka consumer → delay_alerts table
+│   └── openfaas/                  # OpenFaaS Function definition (K8s serverless pattern)
+├── web-app/
+│   ├── backend/server.js          # Express API — Redis cache, PostgreSQL queries, CTB proxy
+│   └── frontend/                  # React — search, route details, Leaflet map
+└── monitoring/
+    ├── prometheus/prometheus.yml   # Static scrape targets
+    └── grafana/
+        ├── datasources/            # PostgreSQL + Prometheus datasources
+        ├── dashboards/             # Dashboard provider config
+        └── dashboard-files/        # Three pre-built dashboard JSONs
 ```
 
 ---
 
-## 🔐 Security Notes
+## Database Schema
 
-- ⚠️ Default credentials: `admin/admin` (change in production)
-- Default database password: `postgres` (change in production)
-- Services only accessible on `localhost` (not exposed to internet)
+| Table | Description |
+|---|---|
+| `eta_raw` | Every raw ETA record from KMB + CTB (route, stop, eta timestamp, company) |
+| `eta_realtime` | Windowed aggregates: avg wait per route/stop per 5-min window |
+| `eta_analytics` | Hourly avg + P95 wait by route, hour-of-day, day-of-week |
+| `stops` | Stop ID → English and Chinese name lookup |
+| `delay_alerts` | Delay events written by the delay-alerter serverless function |
 
 ---
 
-## 📞 Support
+## Common Commands
 
-### Common Issues
-1. **"Port 3000 already in use"** → Change in docker-compose.yml: `"3001:3000"` becomes `"3002:3000"`
-2. **"Docker daemon not running"** → Start Docker Desktop
-3. **"Out of memory"** → Close other apps or increase Docker memory limit
-
-### Check Health
 ```bash
-# All containers should show "Up" and healthy
+# View running containers
 docker compose ps
 
-# If a service is unhealthy, check logs
-docker compose logs <service-name>
+# Stream logs from a service
+docker compose logs -f eta-fetcher
+
+# Check Prometheus targets (should all be UP)
+open http://localhost:9090/targets
+
+# Restart a single service
+docker compose restart web-app
+
+# Full clean restart (drops volumes)
+docker compose down -v && docker compose up -d
+
+# Check API health
+curl http://localhost:3000/api/health
+
+# Check recent delay alerts
+curl http://localhost:3000/api/alerts/recent
 ```
 
 ---
 
-## 🎉 You're All Set!
+## Troubleshooting
 
-Your HK Bus tracking system is ready to use. Access the services and start exploring real-time data!
+**Kafka not healthy after 2 min** — `docker compose restart kafka`
 
-**Questions?** Check the logs with `docker compose logs -f`
+**Grafana shows "No data"** — Wait 5 min for `eta-fetcher` to populate data; ensure PostgreSQL datasource uses host `postgres` (not `localhost`).
 
-Happy tracking! 🚌
+**Port conflict** — Edit the left-hand port in `docker-compose.yml` (e.g. change `"3000:3000"` to `"3010:3000"`).
 
 ---
 
-*Route 91M Real-Time Tracker | Hong Kong Bus System | Built with ❤️*
+*KMB ETABus API · Citybus Open Data API · Built with Kafka · PostgreSQL · Redis · Prometheus · Grafana*

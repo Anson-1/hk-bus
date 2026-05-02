@@ -1,0 +1,47 @@
+---
+# OpenFaaS Function: compute-analytics
+# AWS equivalent: CloudWatch Events (cron) → Lambda
+#
+# Triggered hourly by a Kubernetes CronJob.
+# Queries eta_realtime and writes avg + P95 wait times to eta_analytics.
+apiVersion: openfaas.com/v1
+kind: Function
+metadata:
+  name: compute-analytics
+  namespace: openfaas-fn
+spec:
+  name: compute-analytics
+  image: ansonhui123/compute-analytics:latest
+  environment:
+    DB_HOST: "host.docker.internal"
+    DB_PORT: "5432"
+    DB_NAME: hkbus
+    DB_USER: postgres
+    DB_PASSWORD: postgres
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+---
+# CronJob: triggers compute-analytics every hour
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compute-analytics
+  namespace: openfaas
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            command:
+            - sh
+            - -c
+            - 'curl -sf -X POST http://gateway.openfaas.svc.cluster.local:8080/function/compute-analytics && echo "compute-analytics invoked"'

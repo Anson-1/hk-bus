@@ -2,20 +2,19 @@ import React, { useState, useCallback } from 'react';
 import './App.css';
 import SearchBar from './components/SearchBar';
 import RouteDetailsView from './components/RouteDetailsView';
-import MapDisplay from './components/MapDisplay';
 
 function App() {
   const [selectedRoute, setSelectedRoute] = useState(null);
 
-  const handleRouteSelect = useCallback((routeNum) => {
-    setSelectedRoute(routeNum);
+  const handleRouteSelect = useCallback((routeInfo) => {
+    setSelectedRoute(routeInfo);
   }, []);
 
   return (
     <div className="app">
       <header className="header">
         <h1>🚌 Hong Kong Bus Tracker</h1>
-        <p>Real-time ETA tracking for KMB buses</p>
+        <p>Real-time ETA tracking — KMB & Citybus</p>
       </header>
 
       <div className="container">
@@ -24,7 +23,7 @@ function App() {
         {selectedRoute && (
           <div className="content">
             <div className="left-panel">
-              <RouteDetailsView routeNum={selectedRoute} />
+              <RouteDetailsView routeNum={selectedRoute.route} bound={selectedRoute.bound} company={selectedRoute.company || 'KMB'} />
             </div>
           </div>
         )}
@@ -45,7 +44,7 @@ function App() {
       </div>
 
       <footer className="footer">
-        <p>Data source: KMB ETABus API | Last updated: {new Date().toLocaleTimeString()}</p>
+        <p>Data sources: KMB ETABus API & Citybus API | Built with Kafka · PostgreSQL · Redis · Prometheus · Grafana</p>
       </footer>
     </div>
   );

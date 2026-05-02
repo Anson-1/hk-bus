@@ -1,0 +1,56 @@
+{
+  "title": "Operator Comparison",
+  "uid": "operator-comparison",
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Routes Tracked per Operator",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COALESCE(co, 'KMB') AS \"Operator\", COUNT(DISTINCT route) AS \"Routes\" FROM eta_raw GROUP BY co", "format": "table" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "displayLabels": ["name", "value"] }
+    },
+    {
+      "id": 2,
+      "title": "Avg Wait Time by Operator (minutes)",
+      "type": "bargauge",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COALESCE(r.co, 'KMB') AS \"Operator\", ROUND((AVG(e.avg_wait_sec) / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime e LEFT JOIN (SELECT DISTINCT route, co FROM eta_raw) r ON e.route = r.route GROUP BY r.co", "format": "table" }],
+      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 20 }] } } },
+      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "displayMode": "gradient" }
+    },
+    {
+      "id": 3,
+      "title": "Total ETA Records per Operator",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COALESCE(co, 'KMB') AS \"metric\", COUNT(*) AS \"value\" FROM eta_raw GROUP BY co", "format": "table" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+    },
+    {
+      "id": 4,
+      "title": "Delay Heatmap — Avg Wait by Hour & Day",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT DATE_TRUNC('hour', window_start AT TIME ZONE 'Asia/Hong_Kong') AS \"time\", ROUND((AVG(avg_wait_sec) / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime WHERE $__timeFilter(window_start) GROUP BY 1 ORDER BY 1", "format": "time_series" }],
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
+    },
+    {
+      "id": 5,
+      "title": "Recent Delay Alerts",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT alerted_at AS \"Time\", COALESCE(company, 'KMB') AS \"Operator\", route AS \"Route\", stop_id AS \"Stop\", wait_sec AS \"Wait (sec)\" FROM delay_alerts ORDER BY alerted_at DESC LIMIT 50", "format": "table" }],
+      "options": { "sortBy": [{ "displayName": "Time", "desc": true }] }
+    }
+  ]
+}

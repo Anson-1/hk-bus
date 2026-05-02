@@ -1,0 +1,19 @@
+{
+  "name": "hk-bus-eta-aggregator",
+  "version": "1.0.0",
+  "description": "Kafka consumer that aggregates per-stop ETA wait times into eta_realtime table",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

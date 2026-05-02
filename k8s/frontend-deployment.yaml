@@ -45,7 +45,7 @@ metadata:
   name: hk-bus-web
   namespace: hk-bus
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: hk-bus-web
   ports:

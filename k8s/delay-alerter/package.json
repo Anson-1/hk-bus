@@ -1,0 +1,14 @@
+{
+  "name": "hk-bus-delay-alerter",
+  "version": "1.0.0",
+  "description": "Kafka-triggered delay alert service (OpenFaaS Lambda equivalent)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.3",
+    "express": "^4.18.2"
+  }
+}

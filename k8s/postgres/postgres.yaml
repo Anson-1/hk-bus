@@ -68,17 +68,18 @@ data:
         data_timestamp TIMESTAMPTZ,
         fetched_at     TIMESTAMPTZ   NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_eta_raw_route ON eta_raw (route, dir);
+    CREATE INDEX IF NOT EXISTS idx_eta_raw_route   ON eta_raw (route, dir);
     CREATE INDEX IF NOT EXISTS idx_eta_raw_fetched ON eta_raw (fetched_at);
     CREATE TABLE IF NOT EXISTS eta_realtime (
         route         VARCHAR(10)   NOT NULL,
         dir           CHAR(1)       NOT NULL,
+        stop_id       VARCHAR(64)   NOT NULL,
         window_start  TIMESTAMPTZ   NOT NULL,
         avg_wait_sec  FLOAT,
-        delay_flag    BOOLEAN,
         sample_count  INT,
-        PRIMARY KEY (route, dir, window_start)
+        PRIMARY KEY (route, dir, stop_id, window_start)
     );
+    CREATE INDEX IF NOT EXISTS idx_eta_realtime_lookup ON eta_realtime (route, dir, stop_id);
     CREATE TABLE IF NOT EXISTS eta_analytics (
         route         VARCHAR(10)   NOT NULL,
         hour_of_day   INT           NOT NULL,

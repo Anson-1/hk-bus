@@ -13,9 +13,10 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-function RouteDetailsView({ routeNum }) {
+function RouteDetailsView({ routeNum, bound = 'O', company = 'KMB' }) {
   const [routeInfo, setRouteInfo] = useState(null);
   const [stops, setStops] = useState([]);
+  const [avgWait, setAvgWait] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
@@ -26,11 +27,23 @@ function RouteDetailsView({ routeNum }) {
     const fetchRouteDetails = async () => {
       try {
         setError(null);
-        
-        // Fetch route details with LIVE ETA data (direct from KMB API, no caching)
-        const response = await axios.get(`${API_BASE}/route-live/${routeNum}`);
-        setRouteInfo(response.data.route);
-        setStops(response.data.stops || []);
+
+        const liveEndpoint = company === 'CTB'
+          ? `${API_BASE}/route-live-ctb/${routeNum}`
+          : `${API_BASE}/route-live/${routeNum}`;
+
+        const [liveRes, avgRes] = await Promise.allSettled([
+          axios.get(liveEndpoint, { params: { bound } }),
+          axios.get(`${API_BASE}/avg-wait/${routeNum}/${bound}`),
+        ]);
+
+        if (liveRes.status === 'fulfilled') {
+          setRouteInfo(liveRes.value.data.route);
+          setStops(liveRes.value.data.stops || []);
+        }
+        if (avgRes.status === 'fulfilled') {
+          setAvgWait(avgRes.value.data.stops || {});
+        }
       } catch (err) {
         console.error('Error fetching route details:', err);
         setError(err.response?.data?.message || 'Failed to fetch route details');
@@ -40,7 +53,6 @@ function RouteDetailsView({ routeNum }) {
     };
 
     if (routeNum) {
-      // Initial fetch
       setLoading(true);
       fetchRouteDetails();
 
@@ -88,11 +100,11 @@ function RouteDetailsView({ routeNum }) {
         clearInterval(pollInterval);
       };
     }
-  }, [routeNum]);
+  }, [routeNum, bound, company]);
 
-  // Default map center to Tuen Mun (Route 91M starting point)
+  // Default map center to Hong Kong
   useEffect(() => {
-    setUserLocation([22.3119, 113.9738]); // Tuen Mun coordinates
+    setUserLocation([22.3193, 114.1694]);
   }, []);
 
   if (loading) {
@@ -110,7 +122,16 @@ function RouteDetailsView({ routeNum }) {
   return (
     <div className="route-details-view">
       <div className="route-header">
-        <h2>Route {routeNum}</h2>
+        <h2>
+          Route {routeNum}
+          <span style={{
+            fontSize: '0.65rem', fontWeight: 700, color: '#fff', verticalAlign: 'middle',
+            background: company === 'CTB' ? '#16a34a' : '#2563eb',
+            borderRadius: '5px', padding: '2px 8px', marginLeft: '10px'
+          }}>
+            {company === 'CTB' ? 'Citybus' : 'KMB'}
+          </span>
+        </h2>
         <div className="route-destination">
           {routeInfo.name || `${routeInfo.name_en || 'Unknown'}`}
         </div>
@@ -145,16 +166,9 @@ function RouteDetailsView({ routeNum }) {
                   </div>
                   <div className="stop-eta">
                     {stop.wait_sec !== null && stop.wait_sec !== undefined ? (
-                      <>
-                        <div className="eta-time">
-                          ⏱️ {Math.max(0, Math.round(stop.wait_sec / 60))} min
-                        </div>
-                        {stop.sample_count && (
-                          <div className="eta-samples">
-                            Based on {stop.sample_count} sample{stop.sample_count > 1 ? 's' : ''}
-                          </div>
-                        )}
-                      </>
+                      <div className="eta-time">
+                        ⏱️ {Math.max(0, Math.round(stop.wait_sec / 60))} min
+                      </div>
                     ) : (
                       <div className="no-eta">No ETA</div>
                     )}
@@ -208,7 +222,7 @@ function RouteDetailsView({ routeNum }) {
       </div>
 
       <div className="route-footer">
-        <small>Data source: KMB ETABus API | Last updated: {new Date().toLocaleTimeString()}</small>
+        <small>Data source: {company === 'CTB' ? 'Citybus API' : 'KMB ETABus API'} | Last updated: {new Date().toLocaleTimeString()}</small>
       </div>
     </div>
   );

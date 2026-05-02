@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: hk-bus
+    folder: HK Bus Tracker
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
