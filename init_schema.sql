@@ -64,13 +64,11 @@ CREATE TABLE IF NOT EXISTS ctb.stops (
 );
 
 CREATE TABLE IF NOT EXISTS ctb.routes (
-    route     VARCHAR(20)  NOT NULL,
-    bound     CHAR(1)      NOT NULL,
+    route     VARCHAR(20)  PRIMARY KEY,
     orig_en   TEXT,
     dest_en   TEXT,
     orig_tc   TEXT,
-    dest_tc   TEXT,
-    PRIMARY KEY (route, bound)
+    dest_tc   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ctb.eta (

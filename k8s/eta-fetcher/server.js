@@ -191,16 +191,13 @@ async function loadCTBRoutes() {
   if (rows) {
     ctbRoutes = [...new Set(rows.map(r => r.route))];
     console.log(`[CTB] Loaded ${ctbRoutes.length} routes`);
-    console.log(`[CTB] Sample route object:`, JSON.stringify(rows[0]));
     for (const r of rows) {
-      const bound = r.bound === 'inbound' ? 'I' : r.bound === 'outbound' ? 'O' : r.bound;
-      if (!bound) continue;
       try {
         await db.query(`
-          INSERT INTO ctb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
-          VALUES ($1,$2,$3,$4,$5,$6)
-          ON CONFLICT (route, bound) DO NOTHING
-        `, [r.route, bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+          INSERT INTO ctb.routes (route, orig_en, dest_en, orig_tc, dest_tc)
+          VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (route) DO NOTHING
+        `, [r.route, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
       } catch {}
     }
     console.log(`[CTB] Routes upserted into ctb.routes`);
@@ -211,14 +208,12 @@ async function loadCTBRoutes() {
       ctbRoutes = [...new Set(retry.data.map(r => r.route))];
       console.log(`[CTB] Loaded ${ctbRoutes.length} routes (retry)`);
       for (const r of retry.data) {
-        const bound = r.bound === 'inbound' ? 'I' : r.bound === 'outbound' ? 'O' : r.bound;
-        if (!bound) continue;
         try {
           await db.query(`
-            INSERT INTO ctb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
-            VALUES ($1,$2,$3,$4,$5,$6)
-            ON CONFLICT (route, bound) DO NOTHING
-          `, [r.route, bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+            INSERT INTO ctb.routes (route, orig_en, dest_en, orig_tc, dest_tc)
+            VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT (route) DO NOTHING
+          `, [r.route, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
         } catch {}
       }
       console.log(`[CTB] Routes upserted into ctb.routes (retry)`);
