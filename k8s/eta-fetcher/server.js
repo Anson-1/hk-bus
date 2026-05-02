@@ -191,6 +191,7 @@ async function loadCTBRoutes() {
   if (rows) {
     ctbRoutes = [...new Set(rows.map(r => r.route))];
     console.log(`[CTB] Loaded ${ctbRoutes.length} routes`);
+    console.log(`[CTB] Sample route object:`, JSON.stringify(rows[0]));
     for (const r of rows) {
       const bound = r.bound === 'inbound' ? 'I' : r.bound === 'outbound' ? 'O' : r.bound;
       if (!bound) continue;
