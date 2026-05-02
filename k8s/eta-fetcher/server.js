@@ -186,16 +186,37 @@ async function loadKMBRoutes() {
 
 async function loadCTBRoutes() {
   const data = await get(`${CTB_BASE}/route/CTB`, {}, 30000);
-  if (data.data && Array.isArray(data.data)) {
-    ctbRoutes = [...new Set(data.data.map(r => r.route))];
+  const rows = (data.data && Array.isArray(data.data)) ? data.data : null;
+
+  if (rows) {
+    ctbRoutes = [...new Set(rows.map(r => r.route))];
     console.log(`[CTB] Loaded ${ctbRoutes.length} routes`);
+    for (const r of rows) {
+      try {
+        await db.query(`
+          INSERT INTO ctb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (route, bound) DO NOTHING
+        `, [r.route, r.bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+      } catch {}
+    }
+    console.log(`[CTB] Routes upserted into ctb.routes`);
   } else {
-    // Retry once more before falling back
     await sleep(5000);
     const retry = await get(`${CTB_BASE}/route/CTB`, {}, 30000);
     if (retry.data && Array.isArray(retry.data)) {
       ctbRoutes = [...new Set(retry.data.map(r => r.route))];
       console.log(`[CTB] Loaded ${ctbRoutes.length} routes (retry)`);
+      for (const r of retry.data) {
+        try {
+          await db.query(`
+            INSERT INTO ctb.routes (route, bound, orig_en, dest_en, orig_tc, dest_tc)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (route, bound) DO NOTHING
+          `, [r.route, r.bound, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
+        } catch {}
+      }
+      console.log(`[CTB] Routes upserted into ctb.routes (retry)`);
     } else if (ctbRoutes.length === 0) {
       ctbRoutes = ['1', '5B', '10'];
       console.warn('[CTB] API unavailable, using fallback routes');
