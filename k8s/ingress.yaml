@@ -4,19 +4,11 @@ metadata:
   name: hk-bus-ingress
   namespace: hk-bus
   annotations:
-    # Nginx Ingress Controller (replaces AWS API Gateway)
-    kubernetes.io/ingress.class: nginx
-
-    # WebSocket support for Socket.io real-time updates
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/websocket-services: "hk-bus-api"
-
-    # Increase body size limit for API responses
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Ingress Controller (replaces AWS API Gateway)
+    # Use traefik for k3s, nginx for standard K8s with nginx-ingress
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
   - http:
       paths:
