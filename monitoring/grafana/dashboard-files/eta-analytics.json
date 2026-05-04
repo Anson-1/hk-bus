@@ -1,290 +1,79 @@
 {
-  "title": "ETA Analytics",
-  "uid": "eta-analytics",
+  "title": "KMB Delay Overview",
+  "uid": "kmb-delay-overview",
   "timezone": "browser",
   "refresh": "30s",
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "templating": {
-    "list": [
-      {
-        "name": "route",
-        "label": "Route",
-        "type": "query",
-        "datasource": {
-          "type": "postgres",
-          "uid": "postgres"
-        },
-        "definition": "SELECT DISTINCT route FROM eta_realtime ORDER BY route",
-        "query": "SELECT DISTINCT route || ' [' || COALESCE(co, 'KMB') || ']' AS __text, route AS __value FROM eta_realtime ORDER BY route",
-        "refresh": 2,
-        "sort": 1
-      },
-      {
-        "name": "dir",
-        "label": "Direction",
-        "type": "custom",
-        "query": "O,I",
-        "options": [
-          {
-            "value": "O",
-            "text": "Outbound"
-          },
-          {
-            "value": "I",
-            "text": "Inbound"
-          }
-        ],
-        "current": {
-          "value": "O",
-          "text": "Outbound"
-        }
-      },
-      {
-        "name": "stop",
-        "label": "Stop",
-        "type": "query",
-        "datasource": {
-          "type": "postgres",
-          "uid": "postgres"
-        },
-        "definition": "SELECT e.stop_id AS __value, COALESCE(s.name_en, e.stop_id) AS __text FROM (SELECT DISTINCT stop_id FROM eta_realtime WHERE route = '${route}' AND dir = '${dir}') e LEFT JOIN stops s ON e.stop_id = s.stop_id ORDER BY __text",
-        "query": "SELECT e.stop_id AS __value, COALESCE(s.name_en, e.stop_id) AS __text FROM (SELECT DISTINCT stop_id FROM eta_realtime WHERE route = '${route}' AND dir = '${dir}') e LEFT JOIN stops s ON e.stop_id = s.stop_id ORDER BY __text",
-        "refresh": 2,
-        "sort": 0
-      }
-    ]
-  },
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": { "list": [] },
   "panels": [
     {
-      "id": 1,
-      "title": "Routes Tracked",
-      "type": "stat",
-      "gridPos": {
-        "x": 0,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "rawSql": "SELECT COUNT(DISTINCT route) AS value FROM eta_realtime",
-          "format": "table"
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "blue"
-          },
-          "unit": "short"
-        }
-      }
+      "id": 1, "title": "Total Rows Collected",
+      "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM kmb.eta", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } } }
     },
     {
-      "id": 2,
-      "title": "Stops Tracked (selected route)",
-      "type": "stat",
-      "gridPos": {
-        "x": 4,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "rawSql": "SELECT COUNT(DISTINCT stop_id) AS value FROM eta_realtime WHERE route = '$route' AND dir = '$dir'",
-          "format": "table"
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "green"
-          },
-          "unit": "short"
-        }
-      }
+      "id": 2, "title": "Routes Tracked",
+      "type": "stat", "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COUNT(DISTINCT route) AS value FROM kmb.eta", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } }
     },
     {
-      "id": 3,
-      "title": "Total Data Points Collected",
-      "type": "stat",
-      "gridPos": {
-        "x": 8,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "rawSql": "SELECT COUNT(*) AS value FROM eta_realtime",
-          "format": "table"
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "orange"
-          },
-          "unit": "short"
-        }
-      }
+      "id": 3, "title": "Delay Rate (last hour)",
+      "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS value FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 5 } ] }, "color": { "mode": "thresholds" } } }
     },
     {
-      "id": 4,
-      "title": "Wait Time History \u2014 $route ($stop)",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 4,
-        "w": 24,
-        "h": 10
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "rawSql": "SELECT window_start AS \"time\", ROUND((avg_wait_sec / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime WHERE route = '$route' AND dir = '$dir' AND stop_id = '$stop' AND $__timeFilter(window_start) ORDER BY window_start",
-          "format": "time_series"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 10
-          }
-        }
-      },
-      "options": {
-        "tooltip": {
-          "mode": "single"
-        }
-      }
+      "id": 4, "title": "Stops with Data",
+      "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COUNT(DISTINCT stop_id) AS value FROM kmb.eta", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "orange" } } }
     },
     {
-      "id": 5,
-      "title": "Current Avg Wait \u2014 All Stops on $route ($dir)",
-      "type": "table",
-      "gridPos": {
-        "x": 0,
-        "y": 14,
-        "w": 24,
-        "h": 10
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "rawSql": "SELECT DISTINCT ON (e.stop_id) COALESCE(s.name_en, e.stop_id) AS \"Stop\", ROUND((e.avg_wait_sec / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime e LEFT JOIN stops s ON e.stop_id = s.stop_id WHERE e.route = '$route' AND e.dir = '$dir' ORDER BY e.stop_id, e.window_start DESC",
-          "format": "table"
-        }
-      ],
+      "id": 5, "title": "Delay Events Over Time (5-min buckets)",
+      "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{
+        "rawSql": "SELECT (DATE_TRUNC('hour', fetched_at) + FLOOR(EXTRACT(MINUTE FROM fetched_at)/5)*INTERVAL '5 minutes') AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS \"Delay %\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY 1 ORDER BY 1",
+        "format": "time_series", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+    },
+    {
+      "id": 6, "title": "Top 20 Worst Routes (all collected data)",
+      "type": "table", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT route AS \"Route\", route_name AS \"Route Name\", dir AS \"Dir\", total_samples AS \"Samples\", true_delay_count AS \"Delays\", delay_pct AS \"Delay %\", avg_wait_min AS \"Avg Wait\", p95_wait_min AS \"P95 Wait\" FROM kmb.v_worst_routes LIMIT 20", "format": "table", "refId": "A" }],
+      "options": { "sortBy": [{ "displayName": "Delay %", "desc": true }] },
       "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "left",
-            "displayMode": "auto"
-          }
-        },
+        "defaults": { "custom": { "align": "left", "displayMode": "auto" } },
         "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Avg Wait (min)"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 160
-              },
-              {
-                "id": "custom.align",
-                "value": "center"
-              },
-              {
-                "id": "custom.displayMode",
-                "value": "color-background"
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 10
-                    },
-                    {
-                      "color": "red",
-                      "value": 20
-                    }
-                  ]
-                }
-              }
-            ]
-          }
+          { "matcher": { "id": "byName", "options": "Delay %" }, "properties": [ { "id": "custom.displayMode", "value": "color-background" }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 8 } ] } } ] },
+          { "matcher": { "id": "byName", "options": "Avg Wait" }, "properties": [ { "id": "unit", "value": "none" }, { "id": "displayName", "value": "Avg Wait (min)" } ] },
+          { "matcher": { "id": "byName", "options": "P95 Wait" }, "properties": [ { "id": "unit", "value": "none" }, { "id": "displayName", "value": "P95 Wait (min)" } ] }
         ]
-      },
-      "options": {
-        "sortBy": []
+      }
+    },
+    {
+      "id": 7, "title": "Recent Delay Events (last hour)",
+      "type": "table", "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT fetched_at AT TIME ZONE 'Asia/Hong_Kong' AS \"Time\", route_name AS \"Route\", stop_name AS \"Stop\", delay_type AS \"Type\", remarks AS \"Remarks\", wait_minutes AS \"Wait (min)\" FROM kmb.v_recent_delays LIMIT 50", "format": "table", "refId": "A" }],
+      "options": { "sortBy": [{ "displayName": "Time", "desc": true }] },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "left", "displayMode": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Type" }, "properties": [ { "id": "custom.displayMode", "value": "color-background" }, { "id": "mappings", "value": [ { "type": "value", "options": { "delay": { "color": "red", "index": 0 }, "final_bus": { "color": "blue", "index": 1 } } } ] } ] }
+        ]
       }
     }
   ]

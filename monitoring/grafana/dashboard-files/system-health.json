@@ -3,280 +3,70 @@
   "uid": "system-health",
   "timezone": "browser",
   "refresh": "15s",
-  "time": {
-    "from": "now-30m",
-    "to": "now"
-  },
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
   "panels": [
     {
-      "id": 1,
-      "title": "Services Up",
-      "type": "stat",
-      "gridPos": {
-        "x": 0,
-        "y": 0,
-        "w": 8,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "up",
-          "legendFormat": "{{job}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "DOWN",
-                  "color": "red"
-                },
-                "1": {
-                  "text": "UP",
-                  "color": "green"
-                }
-              }
-            }
-          ],
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "background"
-      }
+      "id": 1, "title": "KMB Rows (last 15 min)",
+      "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM kmb.eta WHERE fetched_at > NOW() - INTERVAL '15 minutes'", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 10000 }, { "color": "green", "value": 30000 } ] }, "color": { "mode": "thresholds" } } }
     },
     {
-      "id": 2,
-      "title": "API Uptime (seconds)",
-      "type": "stat",
-      "gridPos": {
-        "x": 8,
-        "y": 0,
-        "w": 8,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "hk_bus_api_uptime_seconds",
-          "legendFormat": "API"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "blue"
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
-      }
+      "id": 2, "title": "MTR Rows (last 30 min)",
+      "type": "stat", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM mtr.eta WHERE fetched_at > NOW() - INTERVAL '30 minutes'", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 500 }, { "color": "green", "value": 1000 } ] }, "color": { "mode": "thresholds" } } }
     },
     {
-      "id": 5,
-      "title": "ETA Aggregator Uptime (seconds)",
-      "type": "stat",
-      "gridPos": {
-        "x": 16,
-        "y": 0,
-        "w": 8,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "eta_aggregator_uptime_seconds",
-          "legendFormat": "Aggregator"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "green"
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "none"
-      }
+      "id": 3, "title": "Last KMB Fetch",
+      "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(fetched_at)))::int AS value FROM kmb.eta", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "text": {} },
+      "fieldConfig": { "defaults": { "unit": "s", "displayName": "Seconds ago", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 120 } ] }, "color": { "mode": "thresholds" } } }
     },
     {
-      "id": 3,
-      "title": "Kafka Messages Consumed (eta-aggregator)",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 4,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "eta_aggregator_messages_consumed",
-          "legendFormat": "Messages Consumed"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "purple"
-          }
-        }
-      }
+      "id": 4, "title": "KMB Table Size",
+      "type": "stat", "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT pg_total_relation_size('kmb.eta') AS value", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "purple" } } }
     },
     {
-      "id": 4,
-      "title": "Rows Written to eta_realtime",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 12,
-        "y": 4,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "eta_aggregator_rows_written",
-          "legendFormat": "Rows Written"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "orange"
-          }
-        }
-      }
+      "id": 5, "title": "KMB Rows Inserted per Minute",
+      "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 16, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{
+        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM kmb.eta WHERE fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+        "format": "time_series", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
     },
     {
-      "id": 6,
-      "title": "Redis Memory Used",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 12,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "Memory Used"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "red"
-          }
-        }
-      }
+      "id": 6, "title": "Delay Events per Minute",
+      "type": "timeseries", "gridPos": { "x": 16, "y": 4, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{
+        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) AS \"Delay Events\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+        "format": "time_series", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
     },
     {
-      "id": 7,
-      "title": "Redis Connected Clients",
-      "type": "stat",
-      "gridPos": {
-        "x": 12,
-        "y": 12,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "redis_connected_clients",
-          "legendFormat": "Clients"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "blue"
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "colorMode": "value",
-        "graphMode": "area"
-      }
+      "id": 7, "title": "MTR Rows per Minute",
+      "type": "timeseries", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{
+        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM mtr.eta WHERE fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+        "format": "time_series", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
     }
   ]
 }

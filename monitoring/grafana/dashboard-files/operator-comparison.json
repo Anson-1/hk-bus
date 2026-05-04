@@ -1,56 +1,84 @@
 {
-  "title": "Operator Comparison",
-  "uid": "operator-comparison",
+  "title": "Route Inspector",
+  "uid": "route-inspector",
   "timezone": "browser",
-  "refresh": "1m",
+  "refresh": "30s",
   "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "route", "label": "Route", "type": "query",
+        "datasource": { "type": "postgres", "uid": "postgres" },
+        "definition": "SELECT route AS __value, route || '  ' || COALESCE(orig_en,'') || ' → ' || COALESCE(dest_en,'') AS __text FROM kmb.routes WHERE bound = 'O' ORDER BY route",
+        "query": "SELECT route AS __value, route || '  ' || COALESCE(orig_en,'') || ' → ' || COALESCE(dest_en,'') AS __text FROM kmb.routes WHERE bound = 'O' ORDER BY route",
+        "refresh": 2, "sort": 1, "multi": false, "includeAll": false, "current": {}
+      },
+      {
+        "name": "dir", "label": "Direction", "type": "custom",
+        "query": "O,I",
+        "options": [ { "value": "O", "text": "Outbound" }, { "value": "I", "text": "Inbound" } ],
+        "current": { "value": "O", "text": "Outbound" }
+      }
+    ]
+  },
   "panels": [
     {
-      "id": 1,
-      "title": "Routes Tracked per Operator",
-      "type": "piechart",
-      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "id": 1, "title": "Delay % (all data)",
+      "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT COALESCE(co, 'KMB') AS \"Operator\", COUNT(DISTINCT route) AS \"Routes\" FROM eta_raw GROUP BY co", "format": "table" }],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "displayLabels": ["name", "value"] }
-    },
-    {
-      "id": 2,
-      "title": "Avg Wait Time by Operator (minutes)",
-      "type": "bargauge",
-      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
-      "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT COALESCE(r.co, 'KMB') AS \"Operator\", ROUND((AVG(e.avg_wait_sec) / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime e LEFT JOIN (SELECT DISTINCT route, co FROM eta_raw) r ON e.route = r.route GROUP BY r.co", "format": "table" }],
-      "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 20 }] } } },
-      "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "displayMode": "gradient" }
-    },
-    {
-      "id": 3,
-      "title": "Total ETA Records per Operator",
-      "type": "stat",
-      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
-      "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT COALESCE(co, 'KMB') AS \"metric\", COUNT(*) AS \"value\" FROM eta_raw GROUP BY co", "format": "table" }],
+      "targets": [{ "rawSql": "SELECT delay_pct AS value FROM kmb.v_worst_routes WHERE route = '$route' AND dir = '$dir' LIMIT 1", "format": "table", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 8 } ] }, "color": { "mode": "thresholds" } } }
     },
     {
-      "id": 4,
-      "title": "Delay Heatmap — Avg Wait by Hour & Day",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
+      "id": 2, "title": "Avg Wait",
+      "type": "stat", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT DATE_TRUNC('hour', window_start AT TIME ZONE 'Asia/Hong_Kong') AS \"time\", ROUND((AVG(avg_wait_sec) / 60.0)::numeric, 1) AS \"Avg Wait (min)\" FROM eta_realtime WHERE $__timeFilter(window_start) GROUP BY 1 ORDER BY 1", "format": "time_series" }],
-      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
+      "targets": [{ "rawSql": "SELECT avg_wait_min AS value FROM kmb.v_worst_routes WHERE route = '$route' AND dir = '$dir' LIMIT 1", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "fixed", "fixedColor": "blue" } } }
     },
     {
-      "id": 5,
-      "title": "Recent Delay Alerts",
-      "type": "table",
-      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 8 },
+      "id": 3, "title": "P95 Wait (worst-case)",
+      "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT alerted_at AS \"Time\", COALESCE(company, 'KMB') AS \"Operator\", route AS \"Route\", stop_id AS \"Stop\", wait_sec AS \"Wait (sec)\" FROM delay_alerts ORDER BY alerted_at DESC LIMIT 50", "format": "table" }],
-      "options": { "sortBy": [{ "displayName": "Time", "desc": true }] }
+      "targets": [{ "rawSql": "SELECT p95_wait_min AS value FROM kmb.v_worst_routes WHERE route = '$route' AND dir = '$dir' LIMIT 1", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "fixed", "fixedColor": "orange" } } }
+    },
+    {
+      "id": 4, "title": "Total Samples",
+      "type": "stat", "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT total_samples AS value FROM kmb.v_worst_routes WHERE route = '$route' AND dir = '$dir' LIMIT 1", "format": "table", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } }
+    },
+    {
+      "id": 5, "title": "Avg Wait Over Time — $route ($dir)",
+      "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 16, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{
+        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM kmb.eta WHERE route = '$route' AND dir = '$dir' AND eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+        "format": "time_series", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+    },
+    {
+      "id": 6, "title": "Delay % by Hour of Day — $route ($dir)",
+      "type": "barchart", "gridPos": { "x": 16, "y": 4, "w": 8, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT hour_of_day AS \"Hour\", COALESCE(delay_pct, 0) AS \"Delay %\" FROM kmb.mv_route_reliability WHERE route = '$route' AND dir = '$dir' ORDER BY hour_of_day", "format": "table", "refId": "A" }],
+      "options": { "xField": "Hour", "orientation": "auto" },
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "id": 7, "title": "Recent Delay Events — $route ($dir)",
+      "type": "table", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [{ "rawSql": "SELECT fetched_at AT TIME ZONE 'Asia/Hong_Kong' AS \"Time\", stop_name AS \"Stop\", delay_type AS \"Type\", remarks AS \"Remarks\", wait_minutes AS \"Wait (min)\" FROM kmb.v_recent_delays WHERE route = '$route' AND dir = '$dir' ORDER BY fetched_at DESC LIMIT 50", "format": "table", "refId": "A" }],
+      "options": { "sortBy": [{ "displayName": "Time", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "align": "left", "displayMode": "auto" } } }
     }
   ]
 }

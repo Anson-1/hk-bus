@@ -11,10 +11,6 @@ datasources:
     jsonData:
       sslmode: disable
       postgresVersion: 1500
-    isDefault: false
-
-  - name: Prometheus
-    type: prometheus
-    uid: prometheus
-    url: http://prometheus:9090
+      timescaledb: false
+      timezone: Asia/Hong_Kong
     isDefault: true
