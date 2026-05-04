@@ -48,7 +48,7 @@ function SearchBar({ onSelectRoute }) {
       <div className="search-input-container">
         <input
           type="text"
-          placeholder="Search KMB or Citybus routes (e.g. '1', '91M', 'Airport')"
+          placeholder="Search KMB routes (e.g. '1', '103', '2B', 'Airport')"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyPress={handleKeyPress}
@@ -76,12 +76,9 @@ function SearchBar({ onSelectRoute }) {
                 Route {route.route}
                 <span style={{
                   fontSize: '0.7rem', marginLeft: '0.4rem', fontWeight: 700,
-                  color: '#fff',
-                  background: route.company === 'CTB' ? '#16a34a' : '#2563eb',
+                  color: '#fff', background: '#2563eb',
                   borderRadius: '4px', padding: '1px 5px'
-                }}>
-                  {route.company}
-                </span>
+                }}>KMB</span>
                 <span style={{ fontSize: '0.75rem', marginLeft: '0.4rem', color: route.bound === 'O' ? '#3b82f6' : '#f59e0b' }}>
                   {route.bound === 'O' ? 'Outbound' : 'Inbound'}
                 </span>

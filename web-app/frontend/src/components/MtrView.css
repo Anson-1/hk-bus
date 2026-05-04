@@ -1,0 +1,168 @@
+.mtr-view {
+  padding: 1rem 0;
+}
+
+.mtr-selectors {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.mtr-selector-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mtr-selector-group label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mtr-selector-group select {
+  padding: 0.6rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: white;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.mtr-refresh-btn {
+  padding: 0.6rem 1.2rem;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.mtr-refresh-btn:hover:not(:disabled) {
+  background: #5a6fd6;
+}
+
+.mtr-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mtr-error {
+  padding: 1rem;
+  background: #fff3f3;
+  border: 1px solid #ffcdd2;
+  border-radius: 8px;
+  color: #c62828;
+  margin-bottom: 1rem;
+}
+
+.mtr-station-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.mtr-station-header h2 {
+  font-size: 1.6rem;
+  color: #333;
+}
+
+.mtr-line-badge {
+  background: #667eea;
+  color: white;
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mtr-updated {
+  font-size: 0.8rem;
+  color: #999;
+  margin-left: auto;
+}
+
+.mtr-directions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 700px) {
+  .mtr-directions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mtr-direction h3 {
+  font-size: 1rem;
+  color: #555;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid #eee;
+}
+
+.mtr-trains {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.mtr-train {
+  padding: 0.8rem 1rem;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mtr-train-next {
+  background: #e8f5e9;
+  border-left: 4px solid #43a047;
+}
+
+.mtr-train-later {
+  background: #f5f5f5;
+  border-left: 4px solid #bbb;
+}
+
+.mtr-train-dest {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+}
+
+.mtr-train-wait {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #43a047;
+  min-width: 70px;
+  text-align: right;
+}
+
+.mtr-train-later .mtr-train-wait {
+  color: #666;
+}
+
+.mtr-train-meta {
+  font-size: 0.75rem;
+  color: #999;
+  min-width: 90px;
+  text-align: right;
+}
+
+.mtr-placeholder {
+  text-align: center;
+  color: #999;
+  padding: 3rem;
+  font-size: 1.1rem;
+}

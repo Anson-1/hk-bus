@@ -25,15 +25,12 @@ spec:
             memory: "256Mi"
             cpu: "500m"
         env:
-        # Database connection
         - name: DB_HOST
           value: "postgres-db.hk-bus.svc.cluster.local"
         - name: DB_PORT
           value: "5432"
         - name: DB_NAME
           value: "hkbus"
-        - name: KAFKA_BROKERS
-          value: "kafka-broker.hk-bus.svc.cluster.local:9092"
         - name: DB_USER
           value: "postgres"
         - name: DB_PASSWORD
@@ -41,9 +38,6 @@ spec:
             secretKeyRef:
               name: postgres-secret
               key: password
-        # ETA Fetcher configuration
-        - name: POLL_INTERVAL
-          value: "15000"  # Fetch every 15 seconds (in milliseconds)
         - name: NODE_ENV
           value: "production"
         ports:

@@ -1,127 +1,146 @@
-# 🚌 HK Bus Real-Time Tracker
+# HK Transit Real-Time Tracker
 
-A cloud-native, event-driven bus tracking system for Hong Kong — built as an open-source reimplementation of an AWS serverless architecture, deployable to Kubernetes.
-
-**Operators**: KMB + Citybus (CTB) | **Updates**: Every 15 s | **Stack**: Kafka · PostgreSQL · Redis · Prometheus · Grafana
+A cloud-native transit tracking and analytics system for Hong Kong — combining **Option 1** (AWS serverless reimplementation on Kubernetes) and **Option 2** (distributed data analysis with Spark) for the cloud computing course project.
 
 ---
 
-## AWS → Open-Source Mapping
+## Project Overview
 
-| AWS Service | Open-Source Replacement | Role in This Project |
+Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, stored in PostgreSQL, visualised in Grafana, and exposed through a React web app. The entire stack runs on Kubernetes, with AWS services replaced by open-source equivalents. A Spark analysis layer draws insights from the collected dataset.
+
+---
+
+## Part 1 — AWS Serverless Reimplementation (Option 1)
+
+### AWS → Open-Source Mapping
+
+| AWS Service | Open-Source Replacement | Role |
 |---|---|---|
-| Kinesis Data Streams | **Apache Kafka 3.7** (KRaft) | ETA event stream between fetcher and aggregator |
-| RDS (PostgreSQL) | **PostgreSQL 15** | Persistent storage for raw ETAs, analytics, alerts |
-| ElastiCache (Redis) | **Redis 7** | 15 s TTL cache for live route data; 24 h TTL for stop details |
-| CloudWatch Metrics | **Prometheus 2.51** | Scrapes metrics from all services every 15 s |
-| QuickSight / CloudWatch Dashboards | **Grafana 10.4** | Three pre-built dashboards with live Prometheus + PostgreSQL data |
-| Lambda (event-triggered) | **delay-alerter service** | Consumes `eta-events` Kafka topic; writes to `delay_alerts` when `rmk_en` signals a delay |
+| Kinesis Data Streams | **Direct API polling** (Node.js worker pool) | ETA fetcher polls KMB + MTR APIs every 15–30 s with concurrency control |
+| RDS (PostgreSQL) | **PostgreSQL 15** | Stores all ETA records, analytics views, materialized views |
+| ElastiCache | **In-memory cache** (Node.js Map) | Route-stop cache pre-warmed at startup; Redis optional |
+| CloudWatch Dashboards | **Grafana 10.4** | Three dashboards querying PostgreSQL directly |
+| API Gateway + ELB | **Nginx Ingress** (K8s) | Routes `/api/*` and WebSocket traffic to the web app |
+| ECS / Fargate | **Kubernetes** | Orchestrates all services with health checks and resource limits |
 
----
-
-## Architecture
+### Architecture
 
 ```
- KMB API ──┐
-           ├──► eta-fetcher ──► Kafka (eta-events) ──► eta-aggregator ──► PostgreSQL
- CTB API ──┘         │                                       │
-                     │                               delay-alerter
-                     ▼
-                PostgreSQL                                   │
-                     │                                       ▼
-             web-app backend ◄── Redis cache          delay_alerts table
-                     │
-                     ▼
-             web-app frontend (React)
-
- Prometheus ◄── scrapes all services every 15 s
- Grafana    ◄── queries Prometheus + PostgreSQL
+  KMB API ──► eta-fetcher (Node.js) ──► kmb.eta (PostgreSQL)
+                    │                         │
+  MTR API ──────────┘                   mtr.eta (PostgreSQL)
+                                              │
+                                    Analytics Views + Mat. Views
+                                              │
+                              ┌───────────────┴───────────────┐
+                              │                               │
+                         web-app (React + Express)       Grafana 10.4
+                              │
+                         MTR Live ETA tab
+                         KMB Bus search tab
 ```
 
----
+### Services
 
-## Services
+| Service | Image | Description |
+|---|---|---|
+| **postgres** | `postgres:15` | Stores KMB + MTR ETA data, analytics views |
+| **eta-fetcher** | `ansonhui123/hk-bus-eta-fetcher:latest` | Polls KMB (796 routes, ~30 s/cycle) + MTR (10 lines) APIs |
+| **web-app** | `ansonhui123/hk-bus-web-app:latest` | React frontend + Express API (KMB bus search, MTR live ETA) |
+| **grafana** | `grafana/grafana:10.4.0` | 3 dashboards: KMB Delay Overview, MTR Overview, System Health |
 
-| Service | Port | AWS Equivalent | Description |
-|---|---|---|---|
-| web-app | 3000 | ELB + EC2 | React frontend + Express/Node API |
-| postgres | — | RDS | Raw ETAs, analytics, alerts, stops |
-| kafka | — | Kinesis | Event bus between fetcher and aggregator |
-| redis | 6379 | ElastiCache | Route and stop caching |
-| eta-fetcher | 3002 | Kinesis Producer | Polls KMB + CTB APIs every 15 s, publishes to Kafka |
-| eta-aggregator | 3003 | Kinesis Consumer | Consumes Kafka, writes to PostgreSQL, computes hourly analytics |
-| delay-alerter | 3004 | Lambda | Kafka consumer; inserts delay events to `delay_alerts` |
-| prometheus | 9090 | CloudWatch Metrics | Scrapes all services |
-| grafana | 3001 | QuickSight | Three dashboards (ETA analytics, system health, operator comparison) |
-| redis-exporter | 9121 | — | Exposes Redis metrics to Prometheus |
+### Database Schema
 
----
+| Table / View | Type | Description |
+|---|---|---|
+| `kmb.stops` | Table | 6,725 KMB stop locations |
+| `kmb.routes` | Table | 796 KMB routes (both directions) |
+| `kmb.eta` | Table | Raw ETA records — route, stop, wait_minutes, remarks, fetched_at |
+| `mtr.eta` | Table | Raw MTR ETA records — line, station, direction, wait_minutes |
+| `kmb.v_recent_delays` | View | Delay events in the last hour with stop/route names |
+| `kmb.v_worst_routes` | View | Routes ranked by true delay % (min 20 samples) |
+| `kmb.v_delay_by_hour` | View | Delay frequency by hour-of-day and day-of-week |
+| `kmb.mv_route_reliability` | Mat. View | Per-route avg/P50/P95 wait by hour — refreshed hourly |
+| `mtr.v_station_hourly` | View | Per-station avg/P95 wait by hour |
 
-## Quick Start
+### Kubernetes Deployment
 
-### Prerequisites
-- Docker Desktop (Docker Compose v2)
-- ~3 GB free disk space
-
-### Run
+Manifests are in `k8s/`. All images are on Docker Hub.
 
 ```bash
-git clone <repo-url>
-cd hk-bus
-docker compose up -d
-```
+# Create namespace + secret
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres/secret.yaml
 
-All services start automatically. Allow ~90 s for Kafka to become healthy.
-
-### Access
-
-| URL | Service |
-|---|---|
-| http://localhost:3000 | Web App — search any KMB or Citybus route |
-| http://localhost:3001 | Grafana (admin / hkbus123) |
-| http://localhost:9090 | Prometheus |
-
----
-
-## Features
-
-### Web App
-- Search across all KMB and Citybus routes
-- Real-time ETA for every stop on a route (updates every second via polling)
-- Interactive Leaflet map showing stop positions
-- WebSocket subscription for server-push updates
-
-### Grafana Dashboards
-1. **ETA Analytics** — Average and P95 wait times per route, sourced from `eta_analytics` table
-2. **System Health** — Prometheus metrics: Kafka lag, Redis memory, API request rates, active routes
-3. **Operator Comparison** — Side-by-side KMB vs CTB route counts, average waits, delay events
-
-### Data Pipeline
-1. `eta-fetcher` polls KMB ETA Bus API + CTB Open Data API every 15 s
-2. Each ETA event is published to Kafka topic `eta-events`
-3. `eta-aggregator` consumes events, writes to `eta_raw` + `eta_realtime`, computes hourly `eta_analytics`
-4. `delay-alerter` consumes same topic, writes to `delay_alerts` when API response contains a delay remark
-5. `web-app` backend serves live data from PostgreSQL (Redis-cached) to the frontend
-
----
-
-## Kubernetes Deployment
-
-Manifests are in `k8s/`. Services have health checks and resource limits.
-
-```bash
-# Create namespace
-kubectl create namespace hk-bus
-
-# Apply all manifests
-kubectl apply -f k8s/ -n hk-bus
+# Deploy all services
+kubectl apply -f k8s/postgres/postgres.yaml
+kubectl apply -f k8s/eta-fetcher/deployment.yaml
+kubectl apply -f k8s/backend-api-deployment.yaml
+kubectl apply -f k8s/monitoring/grafana.yaml
+kubectl apply -f k8s/ingress.yaml
 
 # Check status
 kubectl get pods -n hk-bus
 
-# Forward web-app to localhost
-kubectl port-forward svc/web-app 3000:3000 -n hk-bus
+# Access web app
+kubectl port-forward svc/hk-bus-api 8080:3000 -n hk-bus
+# open http://localhost:8080
+
+# Access Grafana
+kubectl port-forward svc/grafana-monitoring 3000:3000 -n hk-bus
+# open http://localhost:3000  (admin / hkbus123)
 ```
+
+### Local Development (Docker Compose)
+
+```bash
+docker compose -f docker-compose.collector.yml up -d
+
+# Web app:  http://localhost:8080
+# Grafana:  http://localhost:3001  (admin / hkbus123)
+```
+
+### Web App Features
+
+- **Bus tab** — Search any KMB route, see real-time ETA at every stop with interactive map
+- **MTR tab** — Select any line + station, see live train arrivals for both directions (auto-refreshes every 30 s)
+
+### Grafana Dashboards
+
+1. **KMB Delay Overview** — Total rows, delay rate, delay events over time, top 20 worst routes, recent delay events
+2. **MTR Overview** — Avg/P95 wait by line, wait trends over time, hourly breakdown by station
+3. **System Health** — KMB/MTR ingestion rates per minute, table size, last fetch timestamp
+
+---
+
+## Part 2 — Spark Data Analysis (Option 2)
+
+> **Status**: Data collection running on EC2 (AWS ap-east-1). Analysis to be run after sufficient data is collected (target: 7+ days).
+
+### Data Collection (EC2)
+
+An EC2 instance in AWS ap-east-1 runs the `docker-compose.collector.yml` stack continuously:
+- KMB: ~796 routes × both directions, full cycle every ~30 seconds
+- MTR: 10 lines × all stations, every 30 seconds
+- Expected data volume: ~500K KMB rows/day + ~50K MTR rows/day
+
+### Planned Spark Analysis
+
+The following insights will be drawn from the collected dataset:
+
+1. **KMB Route Reliability Ranking** — Which routes have the highest delay rates? Does it vary by time of day or day of week?
+2. **Peak Hour Analysis** — When are buses most delayed? Compare morning vs evening rush hours.
+3. **Wait Time Distribution** — P50 vs P95 wait times across all routes — how predictable is KMB?
+4. **MTR vs KMB Comparison** — Average wait times across both operators by hour of day.
+5. **Spatial Delay Patterns** — Which areas of HK (by stop cluster) experience more delays?
+
+### EC2 To-Do
+
+- [ ] Verify data collection is running: `docker compose -f docker-compose.collector.yml ps`
+- [ ] Wait for 7+ days of data
+- [ ] Export data from PostgreSQL: `pg_dump` or `COPY kmb.eta TO '/tmp/kmb_eta.csv' CSV HEADER`
+- [ ] Run Spark analysis (PySpark on local or EMR)
+- [ ] Document insights in the project report
 
 ---
 
@@ -129,73 +148,44 @@ kubectl port-forward svc/web-app 3000:3000 -n hk-bus
 
 ```
 hk-bus/
-├── docker-compose.yml
+├── docker-compose.collector.yml     # Local/EC2 deployment (Postgres + eta-fetcher + Grafana)
+├── init_schema.sql                  # Full DB schema: tables, indexes, views, materialized views
 ├── k8s/
-│   ├── postgres/init.sql          # Schema: eta_raw, eta_realtime, eta_analytics, stops, delay_alerts
-│   ├── eta-fetcher/               # Node.js — KMB + CTB poller → Kafka + PostgreSQL
-│   ├── eta-aggregator/            # Node.js — Kafka consumer → PostgreSQL + analytics
-│   ├── delay-alerter/             # Node.js — Kafka consumer → delay_alerts table
-│   └── openfaas/                  # OpenFaaS Function definition (K8s serverless pattern)
+│   ├── namespace.yaml
+│   ├── ingress.yaml                 # Nginx ingress (replaces AWS API Gateway)
+│   ├── postgres/
+│   │   ├── postgres.yaml            # StatefulSet + Service + ConfigMap (init schema)
+│   │   └── secret.yaml              # DB password secret
+│   ├── eta-fetcher/
+│   │   └── deployment.yaml          # ETA collector — KMB + MTR
+│   ├── backend-api-deployment.yaml  # Web app (React + Express) Deployment + Service
+│   └── monitoring/
+│       └── grafana.yaml             # Grafana Deployment + 3 dashboard ConfigMaps
 ├── web-app/
-│   ├── backend/server.js          # Express API — Redis cache, PostgreSQL queries, CTB proxy
-│   └── frontend/                  # React — search, route details, Leaflet map
+│   ├── backend/server.js            # Express API — KMB route search, MTR live ETA
+│   └── frontend/src/
+│       ├── App.jsx                  # Tab layout (Bus / MTR)
+│       ├── components/SearchBar.jsx
+│       ├── components/RouteDetailsView.jsx
+│       └── components/MtrView.jsx   # MTR live ETA tab
 └── monitoring/
-    ├── prometheus/prometheus.yml   # Static scrape targets
     └── grafana/
-        ├── datasources/            # PostgreSQL + Prometheus datasources
-        ├── dashboards/             # Dashboard provider config
-        └── dashboard-files/        # Three pre-built dashboard JSONs
+        └── dashboard-files/         # KMB Delay Overview, MTR Overview, System Health JSONs
 ```
 
 ---
 
-## Database Schema
+## What's Done / What's Left
 
-| Table | Description |
-|---|---|
-| `eta_raw` | Every raw ETA record from KMB + CTB (route, stop, eta timestamp, company) |
-| `eta_realtime` | Windowed aggregates: avg wait per route/stop per 5-min window |
-| `eta_analytics` | Hourly avg + P95 wait by route, hour-of-day, day-of-week |
-| `stops` | Stop ID → English and Chinese name lookup |
-| `delay_alerts` | Delay events written by the delay-alerter serverless function |
+### Done
+- [x] Real-time KMB + MTR ETA collection (EC2, running continuously)
+- [x] PostgreSQL schema with 5 analytics objects (views + materialized view)
+- [x] Web app with KMB bus search + MTR live ETA tab
+- [x] Grafana dashboards (KMB delays, MTR wait times, system health)
+- [x] Kubernetes manifests for all services (tested on local kind cluster)
+- [x] All Docker images pushed to Docker Hub
 
----
-
-## Common Commands
-
-```bash
-# View running containers
-docker compose ps
-
-# Stream logs from a service
-docker compose logs -f eta-fetcher
-
-# Check Prometheus targets (should all be UP)
-open http://localhost:9090/targets
-
-# Restart a single service
-docker compose restart web-app
-
-# Full clean restart (drops volumes)
-docker compose down -v && docker compose up -d
-
-# Check API health
-curl http://localhost:3000/api/health
-
-# Check recent delay alerts
-curl http://localhost:3000/api/alerts/recent
-```
-
----
-
-## Troubleshooting
-
-**Kafka not healthy after 2 min** — `docker compose restart kafka`
-
-**Grafana shows "No data"** — Wait 5 min for `eta-fetcher` to populate data; ensure PostgreSQL datasource uses host `postgres` (not `localhost`).
-
-**Port conflict** — Edit the left-hand port in `docker-compose.yml` (e.g. change `"3000:3000"` to `"3010:3000"`).
-
----
-
-*KMB ETABus API · Citybus Open Data API · Built with Kafka · PostgreSQL · Redis · Prometheus · Grafana*
+### To Do
+- [ ] Collect 7+ days of data on EC2
+- [ ] Export dataset and run Spark analysis
+- [ ] Write project report (architecture decisions, AWS mapping, insights)

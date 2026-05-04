@@ -28,9 +28,7 @@ function RouteDetailsView({ routeNum, bound = 'O', company = 'KMB' }) {
       try {
         setError(null);
 
-        const liveEndpoint = company === 'CTB'
-          ? `${API_BASE}/route-live-ctb/${routeNum}`
-          : `${API_BASE}/route-live/${routeNum}`;
+        const liveEndpoint = `${API_BASE}/route-live/${routeNum}`;
 
         const [liveRes, avgRes] = await Promise.allSettled([
           axios.get(liveEndpoint, { params: { bound } }),

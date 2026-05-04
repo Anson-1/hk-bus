@@ -254,38 +254,20 @@ app.get('/api/route-search', async (req, res) => {
 
     const searchTerm = q.toUpperCase().trim();
 
-    const [kmbRes, ctbRes] = await Promise.allSettled([
-      axios.get(`${KMB_API_BASE}/route`, { timeout: 5000 }),
-      axios.get(`${CTB_API_BASE}/route/CTB`, { timeout: 5000 }),
-    ]);
+    const kmbRes = await axios.get(`${KMB_API_BASE}/route`, { timeout: 5000 }).catch(() => null);
 
-    const kmbResults = kmbRes.status === 'fulfilled' && kmbRes.value.data?.data
-      ? kmbRes.value.data.data
+    const results = kmbRes?.data?.data
+      ? kmbRes.data.data
           .filter(r => r.service_type === '1')
           .filter(r =>
             r.route.toUpperCase().startsWith(searchTerm) ||
             r.orig_en?.toUpperCase().includes(searchTerm) ||
             r.dest_en?.toUpperCase().includes(searchTerm)
           )
-          .slice(0, 15)
+          .slice(0, 20)
           .map(r => ({ route: r.route, bound: r.bound, company: 'KMB', name_en: `${r.orig_en} → ${r.dest_en}` }))
       : [];
 
-    const ctbResults = ctbRes.status === 'fulfilled' && ctbRes.value.data?.data
-      ? ctbRes.value.data.data
-          .filter(r =>
-            r.route.toUpperCase().startsWith(searchTerm) ||
-            r.orig_en?.toUpperCase().includes(searchTerm) ||
-            r.dest_en?.toUpperCase().includes(searchTerm)
-          )
-          .slice(0, 8)
-          .flatMap(r => [
-            { route: r.route, bound: 'O', company: 'CTB', name_en: `${r.orig_en} → ${r.dest_en}` },
-            { route: r.route, bound: 'I', company: 'CTB', name_en: `${r.dest_en} → ${r.orig_en}` },
-          ])
-      : [];
-
-    const results = [...kmbResults, ...ctbResults];
     res.json({ query: q, results, count: results.length });
   } catch (error) {
     console.error('Error in route search:', error.message);
@@ -565,6 +547,61 @@ app.get('/api/route-live-ctb/:routeNum', async (req, res) => {
   } catch (error) {
     console.error('Error fetching CTB live route:', error.message);
     res.status(500).json({ error: 'Failed to fetch CTB route details' });
+  }
+});
+
+const MTR_LINES = {
+  AEL: { name: 'Airport Express', stations: { HOK: 'Hong Kong', KOW: 'Kowloon', TSY: 'Tsing Yi', AIR: 'Airport', AWE: 'AsiaWorld-Expo' } },
+  TCL: { name: 'Tung Chung Line', stations: { HOK: 'Hong Kong', KOW: 'Kowloon', OLY: 'Olympic', NAC: 'Nam Cheong', LAK: 'Lai King', TUC: 'Tsing Yi', SUN: 'Sunny Bay', TIO: 'Tung Chung' } },
+  TML: { name: 'Tuen Ma Line', stations: { WKS: 'Wu Kai Sha', SHM: 'Shek Mun', CIO: 'City One', STW: 'Sha Tin Wai', CKT: 'Che Kung Temple', TAW: 'Tai Wai', HIK: 'Hin Keng', DIH: 'Diamond Hill', KAT: 'Kai Tak', SUW: 'Sung Wong Toi', TKW: 'To Kwa Wan', HOM: 'Ho Man Tin', HUH: 'Hung Hom', ETS: 'East Tsim Sha Tsui', AUS: 'Austin', NAC: 'Nam Cheong', LOP: 'Lok On Pai', YUL: 'Yuen Long', KSR: 'Kam Sheung Road', TIS: 'Tin Shui Wai', SIH: 'Siu Hong', TUM: 'Tuen Mun' } },
+  TWL: { name: 'Tsuen Wan Line', stations: { CEN: 'Central', ADM: 'Admiralty', TST: 'Tsim Sha Tsui', JOR: 'Jordan', YMT: 'Yau Ma Tei', MOK: 'Mong Kok', PRE: 'Prince Edward', SKM: 'Shek Kip Mei', LAT: 'Lai Chi Kok', CSW: 'Cheung Sha Wan', SSP: 'Sham Shui Po', LCK: 'Lai King', KWH: 'Kwai Hing', KWF: 'Kwai Fong', MEF: 'Mei Foo', TWW: 'Tsuen Wan West', TSW: 'Tsuen Wan' } },
+  ISL: { name: 'Island Line', stations: { KET: 'Kennedy Town', HKU: 'HKU', SYP: 'Sai Ying Pun', SHW: 'Sheung Wan', CEN: 'Central', ADM: 'Admiralty', WAC: 'Wan Chai', CAB: 'Causeway Bay', TIH: 'Tin Hau', FOH: 'Fortress Hill', NOP: 'North Point', QUB: 'Quarry Bay', TAK: 'Tai Koo', SWH: 'Sai Wan Ho', SKW: 'Shau Kei Wan', HFC: 'Heng Fa Chuen', CHW: 'Chai Wan' } },
+  KTL: { name: 'Kwun Tong Line', stations: { WHA: 'Whampoa', HOM: 'Ho Man Tin', YMT: 'Yau Ma Tei', MOK: 'Mong Kok', PRE: 'Prince Edward', SKM: 'Shek Kip Mei', KOT: 'Kowloon Tong', LOF: 'Lok Fu', WTS: 'Wong Tai Sin', DIH: 'Diamond Hill', CHH: 'Choi Hung', KOB: 'Kowloon Bay', NTK: 'Ngau Tau Kok', KWT: 'Kwun Tong', LAT: 'Lam Tin', TIK: 'Tiu Keng Leng' } },
+  EAL: { name: 'East Rail Line', stations: { ADM: 'Admiralty', EXH: 'Exhibition Centre', HUH: 'Hung Hom', MKK: 'Mong Kok East', KOT: 'Kowloon Tong', STK: 'Sha Tin', TAW: 'Tai Wai', SHT: 'Sha Tin', FO: 'Fo Tan', UNI: 'University', TAP: 'Tai Po Market', TWO: 'Tai Wo', FAN: 'Fanling', SHS: 'Sheung Shui', LOW: 'Lo Wu', LMC: 'Lok Ma Chau' } },
+  SIL: { name: 'South Island Line', stations: { ADM: 'Admiralty', OCP: 'Ocean Park', WCH: 'Wong Chuk Hang', LET: 'Lei Tung', SOH: 'South Horizons' } },
+  TKL: { name: 'Tseung Kwan O Line', stations: { NOP: 'North Point', QUB: 'Quarry Bay', YAT: 'Yau Tong', TIK: 'Tiu Keng Leng', TKO: 'Tseung Kwan O', LHP: 'LOHAS Park', POA: 'Po Lam', HAH: 'Hang Hau' } },
+  DRL: { name: 'Disneyland Resort Line', stations: { SUN: 'Sunny Bay', DIS: 'Disneyland Resort' } },
+};
+
+app.get('/api/mtr-lines', (req, res) => {
+  res.json(MTR_LINES);
+});
+
+app.get('/api/mtr-eta', async (req, res) => {
+  const { line, station } = req.query;
+  if (!line || !station) return res.status(400).json({ error: 'line and station required' });
+
+  try {
+    const response = await axios.get('https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php', {
+      params: { line, sta: station },
+      timeout: 8000,
+    });
+
+    const key = `${line}-${station}`;
+    const raw = response.data?.data?.[key];
+    if (!raw) return res.json({ line, station, up: [], down: [], curr_time: null });
+
+    const parseDir = (arr) => (arr || []).map(e => ({
+      seq: e.seq,
+      dest: e.dest,
+      dest_name: MTR_LINES[line]?.stations?.[e.dest] || e.dest,
+      platform: e.plat,
+      time: e.time,
+      wait_min: Math.max(0, Math.round((new Date(e.time.replace(' ', 'T') + '+08:00') - new Date()) / 60000)),
+    }));
+
+    res.json({
+      line,
+      station,
+      station_name: MTR_LINES[line]?.stations?.[station] || station,
+      line_name: MTR_LINES[line]?.name || line,
+      up: parseDir(raw.UP),
+      down: parseDir(raw.DOWN),
+      curr_time: raw.curr_time,
+    });
+  } catch (err) {
+    console.error('[MTR ETA]', err.message);
+    res.status(500).json({ error: 'Failed to fetch MTR ETA' });
   }
 });
 
