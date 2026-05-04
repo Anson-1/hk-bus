@@ -18,10 +18,18 @@ Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, s
 |---|---|---|
 | Kinesis Data Streams | **Direct API polling** (Node.js worker pool) | ETA fetcher polls KMB + MTR APIs every 15–30 s with concurrency control |
 | RDS (PostgreSQL) | **PostgreSQL 15** | Stores all ETA records, analytics views, materialized views |
-| ElastiCache | **In-memory cache** (Node.js Map) | Route-stop cache pre-warmed at startup; Redis optional |
+| ElastiCache (Redis) | **Redis 7** | 15 s TTL cache for live route data; 24 h TTL for stop details |
 | CloudWatch Dashboards | **Grafana 10.4** | Three dashboards querying PostgreSQL directly |
 | API Gateway + ELB | **Nginx Ingress** (K8s) | Routes `/api/*` and WebSocket traffic to the web app |
 | ECS / Fargate | **Kubernetes** | Orchestrates all services with health checks and resource limits |
+
+### Design Decisions
+
+**Why not Apache Kafka for the ETA stream?**
+The initial design used Kafka (Kinesis replacement) between the fetcher and aggregator. During implementation we discovered the KMB and MTR public APIs enforce strict per-IP rate limits: KMB returns HTTP 403 after ~5 concurrent requests, and MTR throttles aggressively from non-HK IPs. A Kafka pipeline requires a separate consumer to re-query the API for each event, doubling the request rate and triggering bans. The solution was to collapse the fetcher + aggregator into a single service that writes directly to PostgreSQL — eliminating the intermediate queue while preserving the same end-to-end latency. The Node.js worker pool (concurrency=15 for KMB, concurrency=10 for MTR) replicates Kinesis's parallel shard processing model.
+
+**Redis for caching**
+Redis 7 is deployed as the ElastiCache replacement. The web app backend uses Redis with a 15-second TTL for live route responses and a 24-hour TTL for stop name lookups, falling back to an in-memory Map if Redis is unavailable. This matches ElastiCache's role in a typical AWS serverless stack.
 
 ### Architecture
 
@@ -45,6 +53,7 @@ Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, s
 | Service | Image | Description |
 |---|---|---|
 | **postgres** | `postgres:15` | Stores KMB + MTR ETA data, analytics views |
+| **redis** | `redis:7-alpine` | 15 s TTL cache for live route data; 24 h TTL for stop details |
 | **eta-fetcher** | `ansonhui123/hk-bus-eta-fetcher:latest` | Polls KMB (796 routes, ~30 s/cycle) + MTR (10 lines) APIs |
 | **web-app** | `ansonhui123/hk-bus-web-app:latest` | React frontend + Express API (KMB bus search, MTR live ETA) |
 | **grafana** | `grafana/grafana:10.4.0` | 3 dashboards: KMB Delay Overview, MTR Overview, System Health |
@@ -68,27 +77,36 @@ Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, s
 Manifests are in `k8s/`. All images are on Docker Hub.
 
 ```bash
-# Create namespace + secret
+# 1. Install nginx ingress controller (replaces AWS API Gateway)
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+kubectl wait --namespace ingress-nginx --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller --timeout=90s
+
+# 2. Create namespace + secret
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/postgres/secret.yaml
 
-# Deploy all services
+# 3. Deploy all services
 kubectl apply -f k8s/postgres/postgres.yaml
+kubectl apply -f k8s/redis.yaml
 kubectl apply -f k8s/eta-fetcher/deployment.yaml
 kubectl apply -f k8s/backend-api-deployment.yaml
 kubectl apply -f k8s/monitoring/grafana.yaml
 kubectl apply -f k8s/ingress.yaml
 
-# Check status
+# 4. Check status
 kubectl get pods -n hk-bus
 
-# Access web app
+# 5. Access via ingress (port 80)
+# open http://localhost        → Web App
+# open http://localhost/api/health
+
+# Or via port-forward:
 kubectl port-forward svc/hk-bus-api 8080:3000 -n hk-bus
 # open http://localhost:8080
 
-# Access Grafana
-kubectl port-forward svc/grafana-monitoring 3000:3000 -n hk-bus
-# open http://localhost:3000  (admin / hkbus123)
+kubectl port-forward svc/grafana-monitoring 3001:3000 -n hk-bus
+# open http://localhost:3001  (admin / hkbus123)
 ```
 
 ### Local Development (Docker Compose)
@@ -153,6 +171,7 @@ hk-bus/
 ├── k8s/
 │   ├── namespace.yaml
 │   ├── ingress.yaml                 # Nginx ingress (replaces AWS API Gateway)
+│   ├── redis.yaml                   # Redis deployment (replaces AWS ElastiCache)
 │   ├── postgres/
 │   │   ├── postgres.yaml            # StatefulSet + Service + ConfigMap (init schema)
 │   │   └── secret.yaml              # DB password secret

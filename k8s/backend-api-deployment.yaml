@@ -37,6 +37,8 @@ spec:
                 secretKeyRef:
                   name: postgres-secret
                   key: password
+            - name: REDIS_URL
+              value: "redis://redis.hk-bus.svc.cluster.local:6379"
           livenessProbe:
             httpGet:
               path: /api/health
