@@ -277,24 +277,10 @@ app.get('/api/route-search', async (req, res) => {
 
 app.get('/api/routes', async (req, res) => {
   try {
-    const response = await axios.get(`${KMB_API_BASE}/routes`, { timeout: 5000 });
-    if (response.data && response.data.data) {
-      const routes = response.data.data.slice(0, 100);
-      res.json({
-        routes: routes.map(r => ({
-          route: r.route,
-          bound: r.bound,
-          service_type: r.service_type,
-          orig_en: r.orig_en,
-          orig_tc: r.orig_tc,
-          dest_en: r.dest_en,
-          dest_tc: r.dest_tc,
-        })),
-        count: routes.length,
-      });
-    } else {
-      res.json({ routes: [], count: 0 });
-    }
+    const result = await pgPool.query(
+      'SELECT route, bound, orig_en, orig_tc, dest_en, dest_tc FROM kmb.routes ORDER BY route, bound LIMIT 100'
+    );
+    res.json({ routes: result.rows, count: result.rows.length });
   } catch (error) {
     console.error('Error fetching routes:', error.message);
     res.status(500).json({ error: 'Failed to fetch routes' });

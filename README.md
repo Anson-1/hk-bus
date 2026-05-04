@@ -1,164 +1,286 @@
 # HK Transit Real-Time Tracker
 
-A cloud-native transit tracking and analytics system for Hong Kong — combining **Option 1** (AWS serverless reimplementation on Kubernetes) and **Option 2** (distributed data analysis with Spark) for the cloud computing course project.
+A cloud-native transit tracking and analytics system for Hong Kong, built as a full reimplementation of an AWS serverless architecture using open-source alternatives deployed on Kubernetes.
+
+Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, streamed through Redis Streams, stored in PostgreSQL, processed by OpenFaaS serverless functions, and visualised in a React web app and Grafana dashboards.
 
 ---
 
-## Project Overview
+## AWS → Open-Source Mapping
 
-Real-time ETA data is collected from the KMB (bus) and MTR (rail) public APIs, stored in PostgreSQL, visualised in Grafana, and exposed through a React web app. The entire stack runs on Kubernetes, with AWS services replaced by open-source equivalents. A Spark analysis layer draws insights from the collected dataset.
+| AWS Service | Open-Source Replacement | Role in This Project |
+|---|---|---|
+| **AWS Lambda** | **OpenFaaS** | `kmb-fetcher` and `compute-analytics` functions |
+| **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream between fetcher and alerter |
+| **CloudWatch Events (cron)** | **Kubernetes CronJob** | Triggers functions every minute / every hour |
+| **RDS (PostgreSQL)** | **PostgreSQL 15** | All ETA records, analytics, alert tables |
+| **ElastiCache (Redis)** | **Redis 7** | Stream bus + API response caching |
+| **API Gateway** | **Traefik** (k3s built-in) | Routes `/api/*`, WebSocket, and frontend traffic |
+| **ECS / Fargate** | **Kubernetes (k3s)** | Orchestrates all services |
+| **CloudWatch Dashboards** | **Grafana** | KMB analytics, MTR overview, system health |
+| **Auto Scaling** | **Kubernetes HPA** | CPU/memory-based scaling for the web API |
 
 ---
 
-## Part 1 — AWS Serverless Reimplementation (Option 1)
-
-### AWS → Open-Source Mapping
-
-| AWS Service | Open-Source Replacement | Role |
-|---|---|---|
-| Kinesis Data Streams | **Direct API polling** (Node.js worker pool) | ETA fetcher polls KMB + MTR APIs every 15–30 s with concurrency control |
-| RDS (PostgreSQL) | **PostgreSQL 15** | Stores all ETA records, analytics views, materialized views |
-| ElastiCache (Redis) | **Redis 7** | 15 s TTL cache for live route data; 24 h TTL for stop details |
-| CloudWatch Dashboards | **Grafana 10.4** | Three dashboards querying PostgreSQL directly |
-| API Gateway + ELB | **Nginx Ingress** (K8s) | Routes `/api/*` and WebSocket traffic to the web app |
-| ECS / Fargate | **Kubernetes** | Orchestrates all services with health checks and resource limits |
-
-### Design Decisions
-
-**Why not Apache Kafka for the ETA stream?**
-The initial design used Kafka (Kinesis replacement) between the fetcher and aggregator. During implementation we discovered the KMB and MTR public APIs enforce strict per-IP rate limits: KMB returns HTTP 403 after ~5 concurrent requests, and MTR throttles aggressively from non-HK IPs. A Kafka pipeline requires a separate consumer to re-query the API for each event, doubling the request rate and triggering bans. The solution was to collapse the fetcher + aggregator into a single service that writes directly to PostgreSQL — eliminating the intermediate queue while preserving the same end-to-end latency. The Node.js worker pool (concurrency=15 for KMB, concurrency=10 for MTR) replicates Kinesis's parallel shard processing model.
-
-**Redis for caching**
-Redis 7 is deployed as the ElastiCache replacement. The web app backend uses Redis with a 15-second TTL for live route responses and a 24-hour TTL for stop name lookups, falling back to an in-memory Map if Redis is unavailable. This matches ElastiCache's role in a typical AWS serverless stack.
-
-### Architecture
+## Architecture
 
 ```
-  KMB API ──► eta-fetcher (Node.js) ──► kmb.eta (PostgreSQL)
-                    │                         │
-  MTR API ──────────┘                   mtr.eta (PostgreSQL)
-                                              │
-                                    Analytics Views + Mat. Views
-                                              │
-                              ┌───────────────┴───────────────┐
-                              │                               │
-                         web-app (React + Express)       Grafana 10.4
-                              │
-                         MTR Live ETA tab
-                         KMB Bus search tab
+ KMB Gov API ──► OpenFaaS: kmb-fetcher (every 1 min)
+                      │  publishes via XADD
+                      ▼
+               Redis Stream: kmb-eta-raw ──► delay-alerter (XREAD consumer)
+                                                  │ writes alerts
+                                                  ▼
+ MTR Gov API ──► eta-fetcher (continuous) ──► PostgreSQL
+                      │                         │
+                      │                    kmb.eta  mtr.eta
+                      │                         │
+                      │              OpenFaaS: compute-analytics (every 1 hr)
+                      │                         │ writes
+                      │                    kmb.analytics
+                      │
+              ┌────────────────────┐
+              │   web-app (React)  │◄── hk-bus-api (Express + Redis cache)
+              └────────────────────┘
+                      │
+                 Traefik Ingress (port 80)
+
+              Grafana (port 30400) ◄── queries PostgreSQL directly
 ```
 
-### Services
+---
 
-| Service | Image | Description |
-|---|---|---|
-| **postgres** | `postgres:15` | Stores KMB + MTR ETA data, analytics views |
-| **redis** | `redis:7-alpine` | 15 s TTL cache for live route data; 24 h TTL for stop details |
-| **eta-fetcher** | `ansonhui123/hk-bus-eta-fetcher:latest` | Polls KMB (796 routes, ~30 s/cycle) + MTR (10 lines) APIs |
-| **web-app** | `ansonhui123/hk-bus-web-app:latest` | React frontend + Express API (KMB bus search, MTR live ETA) |
-| **grafana** | `grafana/grafana:10.4.0` | 3 dashboards: KMB Delay Overview, MTR Overview, System Health |
+## Prerequisites
 
-### Database Schema
+- Ubuntu 22.04 / 24.04 x86_64 server (EC2, VM, or bare metal)
+- 2+ CPU cores, 8 GB RAM minimum
+- Ports 80 and 30400 open in your firewall / security group
+- Internet access to pull images and reach the KMB/MTR APIs
 
-| Table / View | Type | Description |
-|---|---|---|
-| `kmb.stops` | Table | 6,725 KMB stop locations |
-| `kmb.routes` | Table | 796 KMB routes (both directions) |
-| `kmb.eta` | Table | Raw ETA records — route, stop, wait_minutes, remarks, fetched_at |
-| `mtr.eta` | Table | Raw MTR ETA records — line, station, direction, wait_minutes |
-| `kmb.v_recent_delays` | View | Delay events in the last hour with stop/route names |
-| `kmb.v_worst_routes` | View | Routes ranked by true delay % (min 20 samples) |
-| `kmb.v_delay_by_hour` | View | Delay frequency by hour-of-day and day-of-week |
-| `kmb.mv_route_reliability` | Mat. View | Per-route avg/P50/P95 wait by hour — refreshed hourly |
-| `mtr.v_station_hourly` | View | Per-station avg/P95 wait by hour |
+---
 
-### Kubernetes Deployment
+## Setup From Scratch
 
-Manifests are in `k8s/`. All images are on Docker Hub.
+### 1. Install Docker
 
 ```bash
-# 1. Install nginx ingress controller (replaces AWS API Gateway)
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-kubectl wait --namespace ingress-nginx --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller --timeout=90s
-
-# 2. Create namespace + secret
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/postgres/secret.yaml
-
-# 3. Deploy all services
-kubectl apply -f k8s/postgres/postgres.yaml
-kubectl apply -f k8s/redis.yaml
-kubectl apply -f k8s/eta-fetcher/deployment.yaml
-kubectl apply -f k8s/backend-api-deployment.yaml
-kubectl apply -f k8s/monitoring/grafana.yaml
-kubectl apply -f k8s/ingress.yaml
-
-# 4. Check status
-kubectl get pods -n hk-bus
-
-# 5. Access via ingress (port 80)
-# open http://localhost        → Web App
-# open http://localhost/api/health
-
-# Or via port-forward:
-kubectl port-forward svc/hk-bus-api 8080:3000 -n hk-bus
-# open http://localhost:8080
-
-kubectl port-forward svc/grafana-monitoring 3001:3000 -n hk-bus
-# open http://localhost:3001  (admin / hkbus123)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
-### Local Development (Docker Compose)
+### 2. Install k3s (lightweight Kubernetes)
 
 ```bash
-docker compose -f docker-compose.collector.yml up -d
-
-# Web app:  http://localhost:8080
-# Grafana:  http://localhost:3001  (admin / hkbus123)
+curl -sfL https://get.k3s.io | sh -
+# Verify
+sudo k3s kubectl get nodes
 ```
 
-### Web App Features
+### 3. Install Helm
 
-- **Bus tab** — Search any KMB route, see real-time ETA at every stop with interactive map
-- **MTR tab** — Select any line + station, see live train arrivals for both directions (auto-refreshes every 30 s)
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
 
-### Grafana Dashboards
+### 4. Clone the repository
 
-1. **KMB Delay Overview** — Total rows, delay rate, delay events over time, top 20 worst routes, recent delay events
-2. **MTR Overview** — Avg/P95 wait by line, wait trends over time, hourly breakdown by station
-3. **System Health** — KMB/MTR ingestion rates per minute, table size, last fetch timestamp
+```bash
+git clone <repo-url> hk-bus
+cd hk-bus
+```
+
+### 5. Build all Docker images
+
+The pre-built images on Docker Hub are ARM64 (built on Apple Silicon). On an x86_64 server you must build locally:
+
+```bash
+# Core services
+docker build -t hk-bus-eta-fetcher:local      -f k8s/eta-fetcher/Dockerfile       k8s/eta-fetcher/
+docker build -t hk-bus-web-app:local           -f web-app/Dockerfile               web-app/
+
+# OpenFaaS functions
+docker build -t hk-bus-kmb-fetcher:local       -f functions/kmb-fetcher/Dockerfile functions/kmb-fetcher/
+docker build -t hk-bus-compute-analytics:local -f functions/compute-analytics/Dockerfile functions/compute-analytics/
+docker build -t hk-bus-delay-alerter:local     -f k8s/delay-alerter/Dockerfile    k8s/delay-alerter/
+```
+
+### 6. Import images into k3s
+
+k3s uses its own containerd runtime and does not share the Docker image cache. Each image must be imported:
+
+```bash
+for img in hk-bus-eta-fetcher hk-bus-web-app hk-bus-kmb-fetcher hk-bus-compute-analytics hk-bus-delay-alerter; do
+  echo "Importing ${img}:local ..."
+  docker save ${img}:local | sudo k3s ctr images import -
+done
+```
+
+### 7. Deploy core infrastructure
+
+```bash
+sudo k3s kubectl apply -f k8s/namespace.yaml
+sudo k3s kubectl apply -f k8s/postgres/secret.yaml
+sudo k3s kubectl apply -f k8s/postgres/postgres.yaml
+sudo k3s kubectl apply -f k8s/redis.yaml
+sudo k3s kubectl apply -f k8s/eta-fetcher/deployment.yaml
+sudo k3s kubectl apply -f k8s/backend-api-deployment.yaml
+sudo k3s kubectl apply -f k8s/monitoring/grafana.yaml
+sudo k3s kubectl apply -f k8s/ingress.yaml
+
+# Wait for all pods to be ready
+sudo k3s kubectl get pods -n hk-bus -w
+```
+
+Expected output (all pods `1/1 Running`):
+
+```
+NAME                           READY   STATUS    RESTARTS   AGE
+eta-fetcher-xxx                1/1     Running   0          1m
+grafana-xxx                    1/1     Running   0          1m
+hk-bus-api-xxx                 1/1     Running   0          1m
+postgres-0                     1/1     Running   0          1m
+redis-xxx                      1/1     Running   0          1m
+```
+
+### 8. Deploy OpenFaaS (Lambda replacement)
+
+```bash
+# Add OpenFaaS Helm repo
+sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm repo add openfaas https://openfaas.github.io/faas-netes/
+sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm repo update
+
+# Create namespaces
+sudo k3s kubectl apply -f https://raw.githubusercontent.com/openfaas/faas-netes/master/namespaces.yml
+
+# Install OpenFaaS
+sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm install openfaas openfaas/openfaas \
+  --namespace openfaas \
+  --set functionNamespace=openfaas-fn \
+  --set basic_auth=false \
+  --set generateBasicAuth=false \
+  --set serviceType=NodePort \
+  --set gateway.nodePort=31112 \
+  --set gateway.readTimeout=300s \
+  --set gateway.writeTimeout=300s \
+  --set gateway.upstreamTimeout=280s
+
+# Wait for OpenFaaS to be ready
+sudo k3s kubectl get pods -n openfaas -w
+```
+
+Expected pods in `openfaas` namespace: `alertmanager`, `gateway`, `nats`, `prometheus`, `queue-worker`.
+
+### 9. Deploy OpenFaaS functions and supporting services
+
+```bash
+# Copy postgres secret to openfaas-fn namespace (needed by compute-analytics)
+PG_PASS=$(sudo k3s kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
+sudo k3s kubectl create secret generic postgres-secret -n openfaas-fn --from-literal=password=${PG_PASS}
+
+# Deploy functions + CronJobs + delay-alerter
+sudo k3s kubectl apply -f k8s/openfaas/functions-deployment.yaml
+```
+
+This deploys:
+- `kmb-fetcher` — OpenFaaS function pod in `openfaas-fn`, invoked every minute by a CronJob
+- `compute-analytics` — OpenFaaS function pod in `openfaas-fn`, invoked every hour by a CronJob
+- `delay-alerter` — Redis Stream consumer deployment in `hk-bus`
+
+### 10. (Optional) Deploy HPA for web API autoscaling
+
+```bash
+sudo k3s kubectl apply -f k8s/hpa.yaml
+```
 
 ---
 
-## Part 2 — Spark Data Analysis (Option 2)
+## Verify Everything Is Working
 
-> **Status**: Data collection running on EC2 (AWS ap-east-1). Analysis to be run after sufficient data is collected (target: 7+ days).
+### Check all pods
 
-### Data Collection (EC2)
+```bash
+# Core services
+sudo k3s kubectl get pods -n hk-bus
 
-An EC2 instance in AWS ap-east-1 runs the `docker-compose.collector.yml` stack continuously:
-- KMB: ~796 routes × both directions, full cycle every ~30 seconds
-- MTR: 10 lines × all stations, every 30 seconds
-- Expected data volume: ~500K KMB rows/day + ~50K MTR rows/day
+# OpenFaaS gateway + workers
+sudo k3s kubectl get pods -n openfaas
 
-### Planned Spark Analysis
+# Function pods
+sudo k3s kubectl get pods -n openfaas-fn
+```
 
-The following insights will be drawn from the collected dataset:
+### Test the web app
 
-1. **KMB Route Reliability Ranking** — Which routes have the highest delay rates? Does it vary by time of day or day of week?
-2. **Peak Hour Analysis** — When are buses most delayed? Compare morning vs evening rush hours.
-3. **Wait Time Distribution** — P50 vs P95 wait times across all routes — how predictable is KMB?
-4. **MTR vs KMB Comparison** — Average wait times across both operators by hour of day.
-5. **Spatial Delay Patterns** — Which areas of HK (by stop cluster) experience more delays?
+```bash
+curl http://localhost/api/health
+# → {"status":"ok","timestamp":"..."}
 
-### EC2 To-Do
+curl http://localhost/api/routes | python3 -m json.tool | head -20
+# → {"routes":[{"route":"1","bound":"I",...}, ...], "count":100}
+```
 
-- [ ] Verify data collection is running: `docker compose -f docker-compose.collector.yml ps`
-- [ ] Wait for 7+ days of data
-- [ ] Export data from PostgreSQL: `pg_dump` or `COPY kmb.eta TO '/tmp/kmb_eta.csv' CSV HEADER`
-- [ ] Run Spark analysis (PySpark on local or EMR)
-- [ ] Document insights in the project report
+### Manually invoke OpenFaaS functions
+
+```bash
+# List all registered functions
+curl -s http://127.0.0.1:31112/system/functions | python3 -m json.tool
+
+# Trigger kmb-fetcher (fetches ETA for 22 routes → publishes to Redis Stream)
+curl -s -X POST http://127.0.0.1:31112/function/kmb-fetcher \
+  -H "Content-Type: application/json" -d '{}'
+# → {"published": 2559, "routes": 22, "errors": 0}  (~5 seconds)
+
+# Trigger compute-analytics (compute avg/P95 wait times from DB)
+curl -s -X POST http://127.0.0.1:31112/function/compute-analytics \
+  -H "Content-Type: application/json" -d '{}'
+# → {"ok": true, "rowsAffected": 1296, "elapsedMs": 53751}  (~54 seconds)
+```
+
+### Check the Redis Stream and pipeline
+
+```bash
+# Stream message count
+sudo k3s kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
+
+# Delay alerts generated by the stream consumer
+sudo k3s kubectl exec -n hk-bus statefulset/postgres -- \
+  psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM public.delay_alerts;"
+
+# Analytics computed by compute-analytics function
+sudo k3s kubectl exec -n hk-bus statefulset/postgres -- \
+  psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM kmb.analytics;"
+```
+
+---
+
+## Access the Services
+
+| Service | URL |
+|---|---|
+| **Web App** | `http://<SERVER_IP>/` |
+| **API Health** | `http://<SERVER_IP>/api/health` |
+| **Grafana** | `http://<SERVER_IP>:30400` |
+
+Get your server's public IP:
+```bash
+curl -s http://checkip.amazonaws.com
+```
+
+> Make sure ports **80** and **30400** are open in your firewall / AWS security group.
+
+---
+
+## Database Schema
+
+| Table / View | Schema | Description |
+|---|---|---|
+| `routes` | `kmb` | 1,316 KMB routes (both directions) |
+| `stops` | `kmb` | 6,725 KMB stop locations |
+| `eta` | `kmb` | Raw ETA records — route, stop, wait_minutes, hour_of_day, day_of_week |
+| `analytics` | `kmb` | Avg / P95 wait times per route per hour — written by `compute-analytics` |
+| `eta` | `mtr` | Raw MTR ETA records — line, station, direction, wait_minutes |
+| `delay_alerts` | `public` | Delay events written by `delay-alerter` Redis Stream consumer |
 
 ---
 
@@ -166,45 +288,98 @@ The following insights will be drawn from the collected dataset:
 
 ```
 hk-bus/
-├── docker-compose.collector.yml     # Local/EC2 deployment (Postgres + eta-fetcher + Grafana)
-├── init_schema.sql                  # Full DB schema: tables, indexes, views, materialized views
 ├── k8s/
-│   ├── namespace.yaml
-│   ├── ingress.yaml                 # Nginx ingress (replaces AWS API Gateway)
-│   ├── redis.yaml                   # Redis deployment (replaces AWS ElastiCache)
+│   ├── namespace.yaml                   # hk-bus namespace
+│   ├── ingress.yaml                     # Traefik ingress (replaces API Gateway)
+│   ├── redis.yaml                       # Redis deployment (replaces ElastiCache)
+│   ├── hpa.yaml                         # HPA for hk-bus-api (replaces Auto Scaling)
 │   ├── postgres/
-│   │   ├── postgres.yaml            # StatefulSet + Service + ConfigMap (init schema)
-│   │   └── secret.yaml              # DB password secret
+│   │   ├── postgres.yaml                # StatefulSet + PVC + init schema ConfigMap
+│   │   └── secret.yaml                  # DB password
 │   ├── eta-fetcher/
-│   │   └── deployment.yaml          # ETA collector — KMB + MTR
-│   ├── backend-api-deployment.yaml  # Web app (React + Express) Deployment + Service
-│   └── monitoring/
-│       └── grafana.yaml             # Grafana Deployment + 3 dashboard ConfigMaps
+│   │   ├── Dockerfile
+│   │   ├── server.js                    # Continuous KMB + MTR ETA collector
+│   │   └── deployment.yaml
+│   ├── backend-api-deployment.yaml      # Web app Deployment + Service
+│   ├── delay-alerter/
+│   │   ├── Dockerfile
+│   │   └── server.js                    # Redis Stream consumer → delay_alerts
+│   ├── monitoring/
+│   │   └── grafana.yaml                 # Grafana + 3 dashboard ConfigMaps
+│   └── openfaas/
+│       └── functions-deployment.yaml    # Function Deployments + CronJobs + delay-alerter
+├── functions/
+│   ├── kmb-fetcher/                     # OpenFaaS fn: KMB API → Redis Stream
+│   │   ├── Dockerfile
+│   │   ├── handler.py                   # Flask HTTP server, publishes via XADD
+│   │   ├── requirements.txt
+│   │   └── stops_config.json            # Stop IDs and route filter list
+│   └── compute-analytics/              # OpenFaaS fn: kmb.eta → kmb.analytics
+│       ├── Dockerfile
+│       ├── handler.js                   # Express HTTP server, avg/P95 query
+│       └── package.json
 ├── web-app/
-│   ├── backend/server.js            # Express API — KMB route search, MTR live ETA
+│   ├── Dockerfile                       # Multi-stage: Vite build + Express serve
+│   ├── backend/server.js                # Express API — routes, stops, ETA, MTR
 │   └── frontend/src/
-│       ├── App.jsx                  # Tab layout (Bus / MTR)
-│       ├── components/SearchBar.jsx
+│       ├── App.jsx
 │       ├── components/RouteDetailsView.jsx
-│       └── components/MtrView.jsx   # MTR live ETA tab
-└── monitoring/
-    └── grafana/
-        └── dashboard-files/         # KMB Delay Overview, MTR Overview, System Health JSONs
+│       ├── components/BusStopView.jsx
+│       └── components/MtrView.jsx
+├── monitoring/
+│   └── grafana/dashboard-files/         # KMB analytics, MTR overview, system health
+└── docker-compose.collector.yml         # Local dev stack (Postgres + eta-fetcher + Grafana)
 ```
 
 ---
 
-## What's Done / What's Left
+## Grafana Dashboards
 
-### Done
-- [x] Real-time KMB + MTR ETA collection (EC2, running continuously)
-- [x] PostgreSQL schema with 5 analytics objects (views + materialized view)
-- [x] Web app with KMB bus search + MTR live ETA tab
-- [x] Grafana dashboards (KMB delays, MTR wait times, system health)
-- [x] Kubernetes manifests for all services (tested on local kind cluster)
-- [x] All Docker images pushed to Docker Hub
+Login at `http://<SERVER_IP>:30400` — no password required.
 
-### To Do
-- [ ] Collect 7+ days of data on EC2
-- [ ] Export dataset and run Spark analysis
-- [ ] Write project report (architecture decisions, AWS mapping, insights)
+| Dashboard | What it shows |
+|---|---|
+| **KMB Analytics** | Total ETA records, delay rate, top delayed routes, wait time distribution |
+| **MTR Overview** | Avg / P95 wait by line, hourly wait trends, per-station breakdown |
+| **System Health** | KMB / MTR ingestion rate per minute, table sizes, last fetch timestamp |
+
+---
+
+## Web App Features
+
+- **Bus tab** — Search any KMB route, see real-time ETA at every stop with an interactive map
+- **MTR tab** — Select any MTR line and station, see live train arrivals for both directions (auto-refreshes every 30 s)
+
+---
+
+## Local Development
+
+```bash
+# Spin up Postgres + eta-fetcher + Grafana locally with Docker Compose
+docker compose -f docker-compose.collector.yml up -d
+
+# Web app: http://localhost:8080
+# Grafana: http://localhost:3001
+```
+
+---
+
+## Troubleshooting
+
+**`exec format error` on pod startup**
+The pre-built Docker Hub images are ARM64. Build locally and import into k3s as shown in steps 5–6.
+
+**`/api/routes` returns error**
+The route list is served from the local `kmb.routes` table. If the table is empty, wait 60 seconds for the `eta-fetcher` to complete its first cycle and populate it.
+
+**OpenFaaS function not invoked by CronJob**
+The CronJobs call the function services directly (`kmb-fetcher.openfaas-fn.svc.cluster.local:8080`). Check the function pod is `Ready`:
+```bash
+sudo k3s kubectl get pods -n openfaas-fn
+```
+
+**Grafana shows no data**
+The `eta-fetcher` needs a few minutes to collect its first batch. Check its logs:
+```bash
+sudo k3s kubectl logs -n hk-bus deployment/eta-fetcher --tail=20
+```

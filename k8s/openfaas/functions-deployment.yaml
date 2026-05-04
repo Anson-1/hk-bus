@@ -1,0 +1,256 @@
+# OpenFaaS functions deployed as K8s Deployments in openfaas-fn namespace.
+# The OpenFaaS gateway auto-discovers services here and proxies
+#   POST /function/<name>  →  http://<name>.openfaas-fn:8080/
+# This is the same pattern AWS Lambda uses: function container + invoker.
+
+# ── kmb-fetcher ──────────────────────────────────────────────────────────────
+# Equivalent: AWS Lambda triggered by CloudWatch Events every minute
+# Fetches KMB ETA from government API → publishes to Redis Stream (Kinesis equiv)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kmb-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: kmb-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: kmb-fetcher
+  template:
+    metadata:
+      labels:
+        faas_function: kmb-fetcher
+    spec:
+      containers:
+      - name: kmb-fetcher
+        image: docker.io/library/hk-bus-kmb-fetcher:local
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
+        env:
+        - name: REDIS_URL
+          value: "redis://redis.hk-bus.svc.cluster.local:6379"
+        - name: STREAM_KEY
+          value: "kmb-eta-raw"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "300m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kmb-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: kmb-fetcher
+spec:
+  selector:
+    faas_function: kmb-fetcher
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── compute-analytics ────────────────────────────────────────────────────────
+# Equivalent: AWS Lambda triggered by CloudWatch Events every hour
+# Reads kmb.eta from Postgres → writes avg/P95 wait times to kmb.analytics
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute-analytics
+  namespace: openfaas-fn
+  labels:
+    faas_function: compute-analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: compute-analytics
+  template:
+    metadata:
+      labels:
+        faas_function: compute-analytics
+    spec:
+      containers:
+      - name: compute-analytics
+        image: docker.io/library/hk-bus-compute-analytics:local
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute-analytics
+  namespace: openfaas-fn
+  labels:
+    faas_function: compute-analytics
+spec:
+  selector:
+    faas_function: compute-analytics
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── CronJob: trigger kmb-fetcher every minute ────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kmb-fetcher-cron
+  namespace: hk-bus
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            command:
+            - sh
+            - -c
+            - |
+              curl -sf --max-time 120 -X POST \
+                http://kmb-fetcher.openfaas-fn.svc.cluster.local:8080/ \
+                -H "Content-Type: application/json" \
+                -d '{}'
+---
+# ── CronJob: trigger compute-analytics every hour ───────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compute-analytics-cron
+  namespace: hk-bus
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            command:
+            - sh
+            - -c
+            - |
+              curl -sf --max-time 60 -X POST \
+                http://compute-analytics.openfaas-fn.svc.cluster.local:8080/ \
+                -H "Content-Type: application/json" \
+                -d '{}'
+---
+# ── delay-alerter: Redis Stream consumer ────────────────────────────────────
+# Equivalent: AWS Lambda triggered by Kinesis Stream
+# Reads from Redis Stream kmb-eta-raw → writes delay alerts to Postgres
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delay-alerter
+  namespace: hk-bus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: delay-alerter
+  template:
+    metadata:
+      labels:
+        app: delay-alerter
+    spec:
+      containers:
+      - name: delay-alerter
+        image: docker.io/library/hk-bus-delay-alerter:local
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3004
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: REDIS_URL
+          value: "redis://redis.hk-bus.svc.cluster.local:6379"
+        - name: STREAM_KEY
+          value: "kmb-eta-raw"
+        - name: THRESHOLD_MIN
+          value: "10"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 15
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delay-alerter
+  namespace: hk-bus
+spec:
+  selector:
+    app: delay-alerter
+  ports:
+  - port: 3004
+    targetPort: 3004
+  type: ClusterIP

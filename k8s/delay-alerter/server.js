@@ -3,152 +3,148 @@
 /**
  * Delay Alerter — OpenFaaS / AWS Lambda equivalent
  *
- * Consumes eta-events from Kafka. When a bus wait time exceeds
- * THRESHOLD_WAIT_SEC, writes a delay alert to PostgreSQL.
- * Maps to: AWS Lambda triggered by Kinesis → OpenFaaS function triggered by Kafka.
+ * Consumes ETA events from Redis Stream (replaces Kinesis/Kafka).
+ * When rmk_en signals a delay, writes an alert to PostgreSQL.
+ * Maps to: AWS Lambda triggered by Kinesis → OpenFaaS triggered by Redis Stream.
  */
 
 const express = require('express');
-const { Kafka, logLevel } = require('kafkajs');
+const { createClient } = require('redis');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3004;
-const THRESHOLD_WAIT_SEC = parseInt(process.env.THRESHOLD_WAIT_SEC || '600', 10); // 10 minutes
+const STREAM_KEY   = process.env.STREAM_KEY   || 'kmb-eta-raw';
+const CONSUMER_GRP = process.env.CONSUMER_GRP || 'delay-alerter-group';
+const CONSUMER_ID  = process.env.CONSUMER_ID  || 'delay-alerter-1';
+const THRESHOLD_MIN = parseInt(process.env.THRESHOLD_MIN || '10', 10); // minutes
 
 const pool = new Pool({
-  host: process.env.DB_HOST || 'postgres',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'hkbus',
-  user: process.env.DB_USER || 'postgres',
+  host:     process.env.DB_HOST     || 'postgres-db.hk-bus.svc.cluster.local',
+  port:     parseInt(process.env.DB_PORT || '5432', 10),
+  database: process.env.DB_NAME     || 'hkbus',
+  user:     process.env.DB_USER     || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
 });
+pool.on('error', err => console.error('[DB] pool error:', err.message));
 
-pool.on('error', (err) => console.error('DB pool error:', err.message));
+const redis = createClient({ url: process.env.REDIS_URL || 'redis://redis.hk-bus.svc.cluster.local:6379' });
+redis.on('error', err => console.error('[Redis] error:', err.message));
 
-const kafka = new Kafka({
-  clientId: 'delay-alerter',
-  brokers: (process.env.KAFKA_BROKERS || 'kafka:9092').split(','),
-  logLevel: logLevel.WARN,
-});
+const stats = { messagesConsumed: 0, alertsGenerated: 0, errors: 0 };
 
-const consumer = kafka.consumer({ groupId: 'delay-alerter-group' });
+const DELAY_REMARKS = new Set(['Bus not in service', 'Last Bus', 'Scheduled Bus']);
 
-let stats = {
-  messagesConsumed: 0,
-  alertsGenerated: 0,
-  errors: 0,
-};
+async function ensureSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.delay_alerts (
+      id         SERIAL PRIMARY KEY,
+      company    VARCHAR(10),
+      route      VARCHAR(20),
+      stop_id    VARCHAR(50),
+      wait_min   INTEGER,
+      remark     TEXT,
+      alerted_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+}
 
-async function handleEvent(event) {
-  const { route, direction, stopId, waitSeconds, timestamp, delayFlag } = event;
-  const company = event.company || 'KMB';
+async function handleMessage(fields) {
+  stats.messagesConsumed++;
+  const route  = fields.route  || '';
+  const stop   = fields.stop   || '';
+  const rmk    = fields.rmk_en || '';
+  const eta    = fields.eta    || '';
+  const co     = fields.co     || 'KMB';
 
-  if (!route) return;
-  if (!delayFlag) return; // only alert when API explicitly marks bus as delayed
+  // Compute wait minutes from eta timestamp
+  let waitMin = null;
+  if (eta) {
+    const diff = Math.round((new Date(eta) - Date.now()) / 60000);
+    if (diff >= 0) waitMin = diff;
+  }
+
+  const isDelayed = DELAY_REMARKS.has(rmk) || (waitMin !== null && waitMin > THRESHOLD_MIN);
+  if (!isDelayed || !route) return;
 
   try {
     await pool.query(
-      `INSERT INTO delay_alerts (company, route, stop_id, wait_sec, alerted_at)
+      `INSERT INTO public.delay_alerts (company, route, stop_id, wait_min, remark)
        VALUES ($1, $2, $3, $4, $5)`,
-      [company, route, stopId, Math.round(waitSeconds), timestamp || new Date().toISOString()]
+      [co, route, stop, waitMin, rmk || null]
     );
     stats.alertsGenerated++;
-    console.log(`🚨 Delay alert: ${company} route ${route} stop ${stopId} — bus marked as delayed by operator`);
+    console.log(`[alert] ${co} route ${route} stop ${stop} wait=${waitMin}min remark="${rmk}"`);
   } catch (err) {
-    console.error('Failed to insert alert:', err.message);
+    console.error('[DB] insert alert failed:', err.message);
     stats.errors++;
   }
 }
 
-async function startConsumer() {
-  await consumer.connect();
-  await consumer.subscribe({ topic: 'eta-events', fromBeginning: false });
+async function startStreamConsumer() {
+  // Create consumer group (ok if already exists)
+  try {
+    await redis.xGroupCreate(STREAM_KEY, CONSUMER_GRP, '0', { MKSTREAM: true });
+    console.log(`[Redis] consumer group "${CONSUMER_GRP}" created`);
+  } catch (err) {
+    if (!err.message.includes('BUSYGROUP')) throw err;
+  }
 
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      let event;
-      try {
-        event = JSON.parse(message.value.toString());
-      } catch {
-        return;
-      }
-      stats.messagesConsumed++;
-      await handleEvent(event);
-    },
-  });
+  console.log(`[Redis] consuming stream "${STREAM_KEY}" as "${CONSUMER_ID}"`);
 
-  console.log(`✅ Delay alerter consuming eta-events (threshold: ${THRESHOLD_WAIT_SEC}s / ${THRESHOLD_WAIT_SEC / 60} min)`);
-}
-
-async function startConsumerWithRetry(maxAttempts = 20, delayMs = 5000) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  while (true) {
     try {
-      await startConsumer();
-      return;
-    } catch (err) {
-      console.warn(`⚠ Kafka connect attempt ${attempt}/${maxAttempts}: ${err.message}`);
-      if (attempt < maxAttempts) {
-        try { await consumer.disconnect(); } catch {}
-        await new Promise(r => setTimeout(r, delayMs));
+      const results = await redis.xReadGroup(
+        CONSUMER_GRP, CONSUMER_ID,
+        [{ key: STREAM_KEY, id: '>' }],
+        { COUNT: 50, BLOCK: 5000 }
+      );
+
+      if (!results) continue;
+
+      for (const { messages } of results) {
+        for (const { id, message } of messages) {
+          await handleMessage(message);
+          await redis.xAck(STREAM_KEY, CONSUMER_GRP, id);
+        }
       }
+    } catch (err) {
+      console.error('[Stream] read error:', err.message);
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
-  console.error('❌ Could not connect to Kafka');
 }
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'healthy', uptime: process.uptime(), stats, threshold_sec: THRESHOLD_WAIT_SEC });
-});
+app.get('/health', (_req, res) =>
+  res.json({ status: 'healthy', uptime: process.uptime(), stats, threshold_min: THRESHOLD_MIN })
+);
 
 app.get('/metrics', (_req, res) => {
   res.set('Content-Type', 'text/plain; version=0.0.4');
   res.send([
-    '# HELP delay_alerter_up Delay alerter health status',
-    '# TYPE delay_alerter_up gauge',
     'delay_alerter_up 1',
-    '# HELP delay_alerter_uptime_seconds Process uptime in seconds',
-    '# TYPE delay_alerter_uptime_seconds gauge',
-    `delay_alerter_uptime_seconds ${process.uptime().toFixed(2)}`,
-    '# HELP delay_alerter_messages_consumed Total Kafka messages consumed',
-    '# TYPE delay_alerter_messages_consumed counter',
     `delay_alerter_messages_consumed ${stats.messagesConsumed}`,
-    '# HELP delay_alerter_alerts_generated Total delay alerts generated',
-    '# TYPE delay_alerter_alerts_generated counter',
     `delay_alerter_alerts_generated ${stats.alertsGenerated}`,
-    '',
   ].join('\n'));
 });
 
 async function main() {
-  console.log('🚀 Delay Alerter starting (AWS Lambda → OpenFaaS equivalent)');
+  console.log('🚀 Delay Alerter starting (Kinesis→Lambda replaced by Redis Stream→OpenFaaS)');
 
-  try {
-    await pool.query('SELECT 1');
-    console.log('✅ PostgreSQL connected');
-  } catch (err) {
-    console.error('❌ PostgreSQL connection failed:', err.message);
-    process.exit(1);
+  for (let i = 0; i < 10; i++) {
+    try { await pool.query('SELECT 1'); console.log('✅ PostgreSQL connected'); break; }
+    catch { console.log(`[DB] waiting... (${i+1}/10)`); await new Promise(r => setTimeout(r, 3000)); }
   }
 
-  startConsumerWithRetry();
+  await ensureSchema();
+  await redis.connect();
+  console.log('✅ Redis connected');
 
-  app.listen(PORT, () => {
-    console.log(`🏥 Health/metrics on port ${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`🏥 Health on :${PORT}`));
+  startStreamConsumer(); // runs forever in background
 }
 
-process.on('SIGTERM', async () => {
-  await consumer.disconnect();
-  process.exit(0);
-});
+process.on('SIGTERM', async () => { await redis.quit(); process.exit(0); });
+process.on('SIGINT',  async () => { await redis.quit(); process.exit(0); });
 
-process.on('SIGINT', async () => {
-  await consumer.disconnect();
-  process.exit(0);
-});
-
-main().catch((err) => {
-  console.error('Fatal:', err);
-  process.exit(1);
-});
+main().catch(err => { console.error('Fatal:', err); process.exit(1); });
