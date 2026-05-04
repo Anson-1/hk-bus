@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: hk-bus-api
-          image: ansonhui123/hk-bus-web-app:latest
-          imagePullPolicy: Always
+          image: docker.io/library/hk-bus-web-app:local
+          imagePullPolicy: Never
           ports:
             - containerPort: 3000
           env:
