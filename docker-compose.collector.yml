@@ -38,6 +38,24 @@ services:
       - "3002:3002"
     restart: unless-stopped
 
+  web-app:
+    image: ansonhui123/hk-bus-web-app:latest
+    container_name: hk-bus-web-app
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "8080:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:10.4.0
     container_name: hk-bus-grafana
