@@ -1,11 +1,11 @@
 /**
  * HK Transit ETA Fetcher Service
- * Collects real-time ETA data from KMB, CTB, GMB, MTR APIs
- * and stores directly into PostgreSQL (4 schemas: kmb, ctb, gmb, mtr)
+ * Collects real-time ETA data from KMB and MTR APIs
+ * and stores directly into PostgreSQL (2 schemas: kmb, mtr)
  *
  * Poll intervals:
- *   KMB / CTB / MTR : every 30 seconds
- *   GMB             : every 60 seconds (larger route set, slower API)
+ *   KMB : every 15 seconds
+ *   MTR : every 30 seconds
  */
 
 'use strict';
@@ -21,21 +21,15 @@ const PORT = process.env.PORT || 3002;
 
 // ── API base URLs ─────────────────────────────────────────────
 const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
-const CTB_BASE = 'https://rt.data.gov.hk/v2/transport/citybus';
-const GMB_BASE = 'https://data.etagmb.gov.hk';
 const MTR_BASE = 'https://rt.data.gov.hk/v1/transport/mtr';
 
 // ── Poll intervals ────────────────────────────────────────────
-const KMB_INTERVAL = 60_000;   // 60s — KMB has 796 routes, each cycle takes ~2-3 min
-const CTB_INTERVAL = 60_000;   // 60s
-const GMB_INTERVAL = 120_000;  // 2 min — 775 routes with 3-step chain
+const KMB_INTERVAL = 15_000;   // 15s rest — cycle ~40s, total refresh ~55s
 const MTR_INTERVAL = 30_000;   // 30s — static stations, fast
 
-// ── Concurrency limits (routes processed in parallel per batch) ─
-const KMB_CONCURRENCY =  1;   // fully sequential — KMB rate limits aggressively
-const CTB_CONCURRENCY =  2;
-const GMB_CONCURRENCY =  2;
-const MTR_CONCURRENCY =  5;
+// ── Concurrency limits ────────────────────────────────────────
+const KMB_CONCURRENCY = 15;
+const MTR_CONCURRENCY = 10;
 
 // ── PostgreSQL pool ───────────────────────────────────────────
 const db = new Pool({
@@ -45,24 +39,23 @@ const db = new Pool({
   user:     process.env.DB_USER     || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   max: 10,
+  options:  '-c timezone=Asia/Hong_Kong',
 });
 db.on('error', err => console.warn('[DB] pool error:', err.message));
 
 // ── In-memory stop detail cache (avoids re-fetching every cycle) ─
 const kmbStopCache = new Map(); // stopId → true (already upserted)
-const ctbStopCache = new Map();
 
-// ── Route lists (loaded on startup, refreshed hourly) ─────────
+// ── Route-stop list cache (refreshed daily via cleanup) ──────────
+const kmbRouteStopCache = new Map(); // `${route}:${direction}` → stops[]
+
+// ── Route list (loaded on startup, refreshed daily) ───────────
 let kmbRoutes = [];   // ['1','2','5C', ...]
-let ctbRoutes = [];   // ['1','5B','10', ...]
-let gmbRoutes = [];   // [{region, route_code, route_id, directions:[]}]
 // MTR is static — defined inline below
 
 // ── Stats ─────────────────────────────────────────────────────
 const stats = {
   kmb: { fetched: 0, inserted: 0, errors: 0, lastCycle: null },
-  ctb: { fetched: 0, inserted: 0, errors: 0, lastCycle: null },
-  gmb: { fetched: 0, inserted: 0, errors: 0, lastCycle: null },
   mtr: { fetched: 0, inserted: 0, errors: 0, lastCycle: null },
 };
 
@@ -88,27 +81,39 @@ const HTTP_HEADERS = {
   'Accept': 'application/json',
 };
 
-async function get(url, params = {}, timeout = 10000) {
+async function get(url, params = {}, timeout = 10000, _retry = 0) {
   try {
     const res = await axios.get(url, { params, timeout, headers: HTTP_HEADERS });
     return res.data || {};
   } catch (e) {
-    // On 403, wait 10s to let the rate limit window reset
-    if (e.response?.status === 403) {
-      console.warn(`[HTTP] 403 rate limited — waiting 10s`);
-      await sleep(10000);
-    } else {
-      console.warn(`[HTTP] FAIL ${url} — ${e.message}`);
+    const status = e.response?.status;
+    // 403 or 429 = rate limited — exponential backoff, max 3 retries
+    if (status === 403 || status === 429) {
+      if (_retry >= 3) {
+        console.warn(`[HTTP] ${status} rate limited ${url} — giving up after 3 retries`);
+        return {};
+      }
+      const wait = 10000 * Math.pow(2, _retry); // 10s, 20s, 40s
+      console.warn(`[HTTP] ${status} rate limited ${url} — waiting ${wait / 1000}s (retry ${_retry + 1}/3)`);
+      await sleep(wait);
+      return get(url, params, timeout, _retry + 1);
     }
+    console.warn(`[HTTP] FAIL ${url} — ${e.message}`);
     return {};
   }
 }
 
-/** Run an array of async tasks with max N in parallel */
+/** Run an array of async tasks with max N in parallel (worker pool — no batch barriers) */
 async function withConcurrency(items, concurrency, fn) {
-  for (let i = 0; i < items.length; i += concurrency) {
-    await Promise.allSettled(items.slice(i, i + concurrency).map(fn));
-  }
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= items.length) break;
+      await fn(items[i]).catch(() => {});
+    }
+  });
+  await Promise.all(workers);
 }
 
 /** Sleep for ms milliseconds */
@@ -142,7 +147,7 @@ function timeComponents(hktStr) {
   return { hour: d.getUTCHours(), dow: (d.getUTCDay() + 6) % 7 };
 }
 
-// ── Route loaders ─────────────────────────────────────────────
+// ── Route loader ──────────────────────────────────────────────
 
 async function loadKMBRoutes() {
   const data = await get(`${KMB_BASE}/route`, {}, 30000);
@@ -184,180 +189,93 @@ async function loadKMBRoutes() {
   }
 }
 
-async function loadCTBRoutes() {
-  const data = await get(`${CTB_BASE}/route/CTB`, {}, 30000);
-  const rows = (data.data && Array.isArray(data.data)) ? data.data : null;
-
-  if (rows) {
-    ctbRoutes = [...new Set(rows.map(r => r.route))];
-    console.log(`[CTB] Loaded ${ctbRoutes.length} routes`);
-    for (const r of rows) {
-      try {
-        await db.query(`
-          INSERT INTO ctb.routes (route, orig_en, dest_en, orig_tc, dest_tc)
-          VALUES ($1,$2,$3,$4,$5)
-          ON CONFLICT (route) DO NOTHING
-        `, [r.route, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
-      } catch {}
-    }
-    console.log(`[CTB] Routes upserted into ctb.routes`);
-  } else {
-    await sleep(5000);
-    const retry = await get(`${CTB_BASE}/route/CTB`, {}, 30000);
-    if (retry.data && Array.isArray(retry.data)) {
-      ctbRoutes = [...new Set(retry.data.map(r => r.route))];
-      console.log(`[CTB] Loaded ${ctbRoutes.length} routes (retry)`);
-      for (const r of retry.data) {
-        try {
-          await db.query(`
-            INSERT INTO ctb.routes (route, orig_en, dest_en, orig_tc, dest_tc)
-            VALUES ($1,$2,$3,$4,$5)
-            ON CONFLICT (route) DO NOTHING
-          `, [r.route, r.orig_en||null, r.dest_en||null, r.orig_tc||null, r.dest_tc||null]);
-        } catch {}
-      }
-      console.log(`[CTB] Routes upserted into ctb.routes (retry)`);
-    } else if (ctbRoutes.length === 0) {
-      ctbRoutes = ['1', '5B', '10'];
-      console.warn('[CTB] API unavailable, using fallback routes');
-    }
+/** Bulk-load all KMB stops in one call — warms stop cache before first cycle */
+async function preloadKMBStops() {
+  const data = await get(`${KMB_BASE}/stop`, {}, 30000);
+  const stops = data.data || [];
+  console.log(`[KMB] Preloading ${stops.length} stops...`);
+  for (const s of stops) {
+    if (kmbStopCache.has(s.stop)) continue;
+    kmbStopCache.set(s.stop, true);
+    try {
+      await db.query(`
+        INSERT INTO kmb.stops (stop_id, name_en, name_tc, lat, lng)
+        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (stop_id) DO NOTHING
+      `, [s.stop, s.name_en||null, s.name_tc||null,
+          s.lat ? parseFloat(s.lat) : null,
+          s.long ? parseFloat(s.long) : null]);
+    } catch {}
   }
-}
-
-/**
- * GMB routes require resolving route_id and directions for each route_code.
- * We load this once on startup and refresh hourly — the chain is:
- *   GET /route/{region} → list of route_codes
- *   GET /route/{region}/{route_code} → route_id + directions + headways
- */
-async function loadGMBRoutes() {
-  const regions = ['HKI', 'KLN', 'NT'];
-  const loaded  = [];
-
-  for (const region of regions) {
-    const data = await get(`${GMB_BASE}/route/${region}`, {}, 20000);
-    // GMB wraps the list inside data.data.routes
-    const codes = data.data?.routes || data.routes || [];
-    console.log(`[GMB] Region ${region}: ${codes.length} route codes`);
-
-    // Resolve route_id and directions for each code (batched)
-    await withConcurrency(codes, 5, async (code) => {
-      const r = await get(`${GMB_BASE}/route/${region}/${code}`, {}, 15000);
-      const entries = r.data?.data || r.data || [];
-      for (const entry of entries) {
-        if (!entry.route_id) continue;
-
-        // Store headways once per route direction
-        for (const dir of (entry.directions || [])) {
-          for (const hw of (dir.headways || [])) {
-            try {
-              await db.query(`
-                INSERT INTO gmb.headways
-                  (route_id, route_seq, start_time, end_time,
-                   frequency, is_weekday, is_holiday)
-                VALUES ($1,$2,$3,$4,$5,$6,$7)
-                ON CONFLICT DO NOTHING
-              `, [
-                entry.route_id, dir.route_seq,
-                hw.start_time, hw.end_time,
-                hw.frequency || null,
-                (hw.weekdays || []).some(Boolean),
-                hw.public_holiday || false,
-              ]);
-            } catch {}
-          }
-
-          // Store route reference
-          try {
-            await db.query(`
-              INSERT INTO gmb.routes
-                (route_id, route_seq, route_code, region, orig_en, dest_en)
-              VALUES ($1,$2,$3,$4,$5,$6)
-              ON CONFLICT (route_id, route_seq) DO NOTHING
-            `, [
-              entry.route_id, dir.route_seq, code, region,
-              dir.orig_en || null, dir.dest_en || null,
-            ]);
-          } catch {}
-        }
-
-        loaded.push({
-          region,
-          route_code: code,
-          route_id:   entry.route_id,
-          directions: entry.directions || [],
-        });
-      }
-      await sleep(50); // gentle rate limit during loading
-    });
-  }
-
-  gmbRoutes = loaded;
-  console.log(`[GMB] Loaded ${gmbRoutes.length} route entries across all regions`);
+  console.log(`[KMB] Stop cache warmed (${kmbStopCache.size} stops)`);
 }
 
 // ── KMB collector ─────────────────────────────────────────────
 
 async function fetchKMBRoute(route) {
-  for (const direction of ['outbound', 'inbound']) {
-    const dirCode = direction === 'outbound' ? 'O' : 'I';
-    const stopsData = await get(`${KMB_BASE}/route-stop/${route}/${direction}/1`, {}, 20000);
-    const stops = (stopsData.data || []).slice(0, 15);
-    if (!stops.length) continue;
+  // Build seq→stop_id map from route-stop cache (both directions)
+  const seqToStop = { O: {}, I: {} };
+  for (const [direction, dirCode] of [['outbound', 'O'], ['inbound', 'I']]) {
+    const cacheKey = `${route}:${direction}`;
+    let stops = kmbRouteStopCache.get(cacheKey);
+    if (!stops) {
+      const stopsData = await get(`${KMB_BASE}/route-stop/${route}/${direction}/1`, {}, 20000);
+      stops = stopsData.data || [];
+      if (stops.length) kmbRouteStopCache.set(cacheKey, stops);
+    }
+    for (const s of stops) seqToStop[dirCode][s.seq] = s.stop;
+  }
 
-    for (const stop of stops) {
-      const stopId = stop.stop;
+  // One call returns ETAs for ALL stops in BOTH directions
+  const etaData = await get(`${KMB_BASE}/route-eta/${route}/1`, {}, 20000);
+  const etas = etaData.data || [];
+  if (!etas.length) return;
 
-      // Upsert stop details once per run
-      if (!kmbStopCache.has(stopId)) {
-        kmbStopCache.set(stopId, true);
-        const sd = await get(`${KMB_BASE}/stop/${stopId}`, {}, 20000);
-        const d  = sd.data;
-        if (d) {
-          try {
-            await db.query(`
-              INSERT INTO kmb.stops (stop_id, name_en, name_tc, lat, lng)
-              VALUES ($1,$2,$3,$4,$5)
-              ON CONFLICT (stop_id) DO NOTHING
-            `, [stopId, d.name_en||null, d.name_tc||null,
-                d.lat ? parseFloat(d.lat) : null,
-                d.long ? parseFloat(d.long) : null]);
-          } catch {}
-        }
-      }
+  const now = nowHKT();
+  const { hour, dow } = timeComponents(now);
 
-      // Fetch ETA (up to 3 buses per stop)
-      const etaData = await get(`${KMB_BASE}/eta/${stopId}/${route}/1`, {}, 20000);
-      const etas    = (etaData.data || []).slice(0, 3);
-      if (!etas.length) continue;
+  for (const e of etas) {
+    if (!e.eta) continue;
+    const stopId = seqToStop[e.dir]?.[e.seq];
+    if (!stopId) continue;
 
-      for (const e of etas) {
-        if (!e.eta) continue;
-        const etaHKT  = toHKT(e.eta);
-        const now     = nowHKT();
-        const waitMin = etaHKT
-          ? Math.max(0, Math.round((new Date(etaHKT) - new Date(now)) / 60000))
-          : null;
-        const rmk    = e.rmk_en || '';
-        const isSch  = rmk === 'Scheduled Bus' || rmk === '';
-        const { hour, dow } = timeComponents(now);
-
+    // Upsert stop details once per lifetime
+    if (!kmbStopCache.has(stopId)) {
+      kmbStopCache.set(stopId, true);
+      const sd = await get(`${KMB_BASE}/stop/${stopId}`, {}, 20000);
+      const d  = sd.data;
+      if (d) {
         try {
           await db.query(`
-            INSERT INTO kmb.eta
-              (route, dir, stop_id, eta_seq, wait_minutes, eta_timestamp,
-               is_scheduled, remarks, fetched_at, hour_of_day, day_of_week)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-          `, [route, dirCode, stopId, e.eta_seq||1, waitMin,
-              etaHKT, isSch, rmk||null, now, hour, dow]);
-          stats.kmb.inserted++;
-        } catch (err) {
-          stats.kmb.errors++;
-        }
+            INSERT INTO kmb.stops (stop_id, name_en, name_tc, lat, lng)
+            VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT (stop_id) DO NOTHING
+          `, [stopId, d.name_en||null, d.name_tc||null,
+              d.lat ? parseFloat(d.lat) : null,
+              d.long ? parseFloat(d.long) : null]);
+        } catch {}
       }
-      stats.kmb.fetched++;
-      await sleep(200);  // 200ms between stops to avoid rate limiting
     }
+
+    const etaHKT  = toHKT(e.eta);
+    const waitMin = etaHKT
+      ? Math.max(0, Math.round((new Date(etaHKT) - new Date(now)) / 60000))
+      : null;
+    const rmk   = e.rmk_en || '';
+    const isSch = rmk === 'Scheduled Bus' || rmk === '';
+
+    try {
+      await db.query(`
+        INSERT INTO kmb.eta
+          (route, dir, stop_id, eta_seq, wait_minutes, eta_timestamp,
+           is_scheduled, remarks, fetched_at, hour_of_day, day_of_week)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      `, [route, e.dir, stopId, e.eta_seq||1, waitMin,
+          etaHKT, isSch, rmk||null, now, hour, dow]);
+      stats.kmb.inserted++;
+    } catch {
+      stats.kmb.errors++;
+    }
+    stats.kmb.fetched++;
   }
 }
 
@@ -369,162 +287,6 @@ async function runKMBCycle() {
   );
   stats.kmb.lastCycle = nowHKT();
   console.log(`[KMB] Cycle done in ${((Date.now()-start)/1000).toFixed(1)}s | inserted=${stats.kmb.inserted} errors=${stats.kmb.errors}`);
-}
-
-// ── CTB collector ─────────────────────────────────────────────
-
-async function fetchCTBRoute(route) {
-  for (const direction of ['outbound', 'inbound']) {
-    const dirCode  = direction === 'outbound' ? 'O' : 'I';
-    const stopsData = await get(`${CTB_BASE}/route-stop/CTB/${route}/${direction}`, {}, 15000);
-    const stops = (stopsData.data || []).slice(0, 15);
-    if (!stops.length) continue;
-
-    for (const stop of stops) {
-      const stopId = stop.stop;
-
-      if (!ctbStopCache.has(stopId)) {
-        ctbStopCache.set(stopId, true);
-        const sd = await get(`${CTB_BASE}/stop/${stopId}`, {}, 15000);
-        const d  = sd.data;
-        if (d) {
-          try {
-            await db.query(`
-              INSERT INTO ctb.stops (stop_id, name_en, name_tc, lat, lng)
-              VALUES ($1,$2,$3,$4,$5)
-              ON CONFLICT (stop_id) DO NOTHING
-            `, [stopId, d.name_en||null, d.name_tc||null,
-                d.lat ? parseFloat(d.lat) : null,
-                d.long ? parseFloat(d.long) : null]);
-          } catch {}
-        }
-      }
-
-      const etaData = await get(`${CTB_BASE}/eta/CTB/${stopId}/${route}`, {}, 15000);
-      const etas    = (etaData.data || [])
-        .filter(e => e.dir === dirCode)
-        .slice(0, 3);
-      if (!etas.length) continue;
-
-      for (const e of etas) {
-        if (!e.eta) continue;
-        const etaHKT  = toHKT(e.eta);
-        const now     = nowHKT();
-        const waitMin = etaHKT
-          ? Math.max(0, Math.round((new Date(etaHKT) - new Date(now)) / 60000))
-          : null;
-        const rmk   = e.rmk_en || '';
-        const isSch = rmk === 'Scheduled Bus' || rmk === '';
-        const { hour, dow } = timeComponents(now);
-
-        try {
-          await db.query(`
-            INSERT INTO ctb.eta
-              (route, dir, stop_id, eta_seq, wait_minutes, eta_timestamp,
-               is_scheduled, remarks, fetched_at, hour_of_day, day_of_week)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-          `, [route, dirCode, stopId, 1, waitMin,
-              etaHKT, isSch, rmk||null, now, hour, dow]);
-          stats.ctb.inserted++;
-        } catch (err) {
-          stats.ctb.errors++;
-        }
-      }
-      stats.ctb.fetched++;
-      await sleep(200);
-    }
-  }
-}
-
-async function runCTBCycle() {
-  const start = Date.now();
-  console.log(`\n[CTB] Cycle start — ${ctbRoutes.length} routes`);
-  await withConcurrency(ctbRoutes, CTB_CONCURRENCY, r =>
-    fetchCTBRoute(r).catch(() => { stats.ctb.errors++; })
-  );
-  stats.ctb.lastCycle = nowHKT();
-  console.log(`[CTB] Cycle done in ${((Date.now()-start)/1000).toFixed(1)}s | inserted=${stats.ctb.inserted} errors=${stats.ctb.errors}`);
-}
-
-// ── GMB collector ─────────────────────────────────────────────
-
-/**
- * GMB uses a 3-step chain per route direction:
- *   1. route_id + route_seq already resolved at startup (in gmbRoutes)
- *   2. GET /route-stop/{route_id}/{route_seq} → stop list with stop_seq
- *   3. GET /eta/route-stop/{route_id}/{route_seq}/{stop_seq} → ETA per stop
- */
-async function fetchGMBRoute(entry) {
-  const { region, route_code, route_id, directions } = entry;
-
-  for (const dir of directions) {
-    const route_seq = dir.route_seq;
-    const dirCode   = route_seq === 1 ? 'O' : 'I';
-
-    // Step 2: get stop list
-    const r2    = await get(`${GMB_BASE}/route-stop/${route_id}/${route_seq}`, {}, 15000);
-    const stops = (r2.data?.data?.route_stops || r2.data?.route_stops || []).slice(0, 15);
-    if (!stops.length) continue;
-
-    for (const stop of stops) {
-      const { stop_seq, stop_id, name_en, name_tc } = stop;
-
-      // Upsert stop
-      try {
-        await db.query(`
-          INSERT INTO gmb.stops (stop_id, name_en, name_tc, region)
-          VALUES ($1,$2,$3,$4)
-          ON CONFLICT (stop_id) DO NOTHING
-        `, [stop_id, name_en||null, name_tc||null, region]);
-      } catch {}
-
-      // Step 3: get ETA for this stop
-      const r3  = await get(`${GMB_BASE}/eta/route-stop/${route_id}/${route_seq}/${stop_seq}`, {}, 15000);
-      const etas = (r3.data?.data?.eta || r3.data?.eta || []).slice(0, 3);
-      if (!etas.length) continue;
-
-      for (const e of etas) {
-        if (e.diff === null || e.diff === undefined) continue;
-        const diff    = parseInt(e.diff, 10);
-        const waitMin = Math.max(0, diff);
-        const now     = nowHKT();
-        // Compute absolute arrival time from diff offset
-        const etaHKT  = diff >= 0
-          ? toHKT(new Date(Date.now() + diff * 60000))
-          : null;
-        const rmk   = e.remarks_en || '';
-        const isSch = rmk === 'Scheduled' || rmk === '';
-        const { hour, dow } = timeComponents(now);
-
-        try {
-          await db.query(`
-            INSERT INTO gmb.eta
-              (route_id, route_code, region, route_seq, stop_id, eta_seq,
-               wait_minutes, eta_timestamp, is_scheduled, remarks,
-               fetched_at, hour_of_day, day_of_week)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-          `, [route_id, route_code, region, route_seq, stop_id,
-              e.eta_seq||1, waitMin, etaHKT, isSch, rmk||null,
-              now, hour, dow]);
-          stats.gmb.inserted++;
-        } catch {
-          stats.gmb.errors++;
-        }
-      }
-      stats.gmb.fetched++;
-      await sleep(150); // GMB API is slower, be more gentle
-    }
-  }
-}
-
-async function runGMBCycle() {
-  const start = Date.now();
-  console.log(`\n[GMB] Cycle start — ${gmbRoutes.length} route entries`);
-  await withConcurrency(gmbRoutes, GMB_CONCURRENCY, r =>
-    fetchGMBRoute(r).catch(() => { stats.gmb.errors++; })
-  );
-  stats.gmb.lastCycle = nowHKT();
-  console.log(`[GMB] Cycle done in ${((Date.now()-start)/1000).toFixed(1)}s | inserted=${stats.gmb.inserted} errors=${stats.gmb.errors}`);
 }
 
 // ── MTR collector ─────────────────────────────────────────────
@@ -577,7 +339,7 @@ async function runMTRCycle() {
 async function cleanup() {
   const cutoff = new Date(Date.now() - 16 * 24 * 3600 * 1000);
   const cutHKT = toHKT(cutoff);
-  for (const table of ['kmb.eta', 'ctb.eta', 'gmb.eta', 'mtr.eta']) {
+  for (const table of ['kmb.eta', 'mtr.eta']) {
     try {
       const r = await db.query(
         `DELETE FROM ${table} WHERE fetched_at < $1`, [cutHKT]
@@ -586,6 +348,8 @@ async function cleanup() {
         console.log(`[Cleanup] Deleted ${r.rowCount} old rows from ${table}`);
     } catch {}
   }
+  kmbRouteStopCache.clear();
+  console.log('[Cleanup] Route-stop cache cleared');
 }
 
 // ── Polling loops ─────────────────────────────────────────────
@@ -615,26 +379,32 @@ async function main() {
     }
   }
 
-  // Load routes from all APIs
+  // Load KMB routes, then warm stop cache before first cycle
   console.log('📋 Loading routes...');
-  await Promise.all([loadKMBRoutes(), loadCTBRoutes()]);
-  await loadGMBRoutes(); // sequential — writes headways/routes to DB
+  await loadKMBRoutes();
 
-  // Refresh route lists every hour
-  setInterval(() => Promise.all([loadKMBRoutes(), loadCTBRoutes()]), 3600_000);
-  setInterval(() => loadGMBRoutes(), 3600_000);
+  console.log('🔥 Pre-warming stop cache...');
+  await preloadKMBStops();
+  console.log('✅ Stop cache ready — first cycle will be fast');
+
+  // Refresh route list once per day (routes change very rarely)
+  setInterval(loadKMBRoutes, 24 * 3600_000);
+
+  // Refresh materialized reliability view hourly
+  setInterval(async () => {
+    try {
+      await db.query('REFRESH MATERIALIZED VIEW CONCURRENTLY kmb.mv_route_reliability');
+      console.log('[Analytics] mv_route_reliability refreshed');
+    } catch (e) { console.warn('[Analytics] refresh failed:', e.message); }
+  }, 3600_000);
 
   // Cleanup old data once per day
   setInterval(cleanup, 24 * 3600_000);
 
-  // Start all 4 polling loops
-  console.log('🚀 Starting collection loops...\n');
+  // Start KMB and MTR loops
+  console.log('🚀 Starting KMB and MTR collection loops...\n');
   startLoop('KMB', runKMBCycle, KMB_INTERVAL);
-
-  // Stagger CTB/GMB/MTR starts to avoid simultaneous bursts
-  setTimeout(() => startLoop('CTB', runCTBCycle, CTB_INTERVAL), 5_000);
-  setTimeout(() => startLoop('GMB', runGMBCycle, GMB_INTERVAL), 10_000);
-  setTimeout(() => startLoop('MTR', runMTRCycle, MTR_INTERVAL), 15_000);
+  setTimeout(() => startLoop('MTR', runMTRCycle, MTR_INTERVAL), 5_000);
 }
 
 // ── Health check endpoint ─────────────────────────────────────

@@ -3,6 +3,7 @@ services:
   postgres:
     image: postgres:15
     container_name: hk-bus-postgres
+    command: ["-c", "timezone=Asia/Hong_Kong"]
     environment:
       POSTGRES_DB: hkbus
       POSTGRES_USER: postgres

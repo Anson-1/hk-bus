@@ -1,12 +1,10 @@
 -- ============================================================
 -- HK Transit Database Schema
--- 4 separate schemas: kmb, ctb, gmb, mtr
+-- 2 schemas: kmb, mtr
 -- ============================================================
 
 -- ── Create schemas ───────────────────────────────────────────
 CREATE SCHEMA IF NOT EXISTS kmb;
-CREATE SCHEMA IF NOT EXISTS ctb;
-CREATE SCHEMA IF NOT EXISTS gmb;
 CREATE SCHEMA IF NOT EXISTS mtr;
 
 -- ============================================================
@@ -52,101 +50,6 @@ CREATE INDEX IF NOT EXISTS idx_kmb_eta_hour    ON kmb.eta (hour_of_day, day_of_w
 CREATE INDEX IF NOT EXISTS idx_kmb_eta_delay   ON kmb.eta (is_scheduled, fetched_at DESC);
 
 -- ============================================================
--- CTB
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS ctb.stops (
-    stop_id   VARCHAR(64) PRIMARY KEY,
-    name_en   TEXT,
-    name_tc   TEXT,
-    lat       DOUBLE PRECISION,
-    lng       DOUBLE PRECISION
-);
-
-CREATE TABLE IF NOT EXISTS ctb.routes (
-    route     VARCHAR(20)  PRIMARY KEY,
-    orig_en   TEXT,
-    dest_en   TEXT,
-    orig_tc   TEXT,
-    dest_tc   TEXT
-);
-
-CREATE TABLE IF NOT EXISTS ctb.eta (
-    id            BIGSERIAL    PRIMARY KEY,
-    route         VARCHAR(20)  NOT NULL,
-    dir           CHAR(1)      NOT NULL,
-    stop_id       VARCHAR(64)  NOT NULL,
-    eta_seq       SMALLINT     NOT NULL,
-    wait_minutes  SMALLINT,
-    eta_timestamp TIMESTAMP,
-    is_scheduled  BOOLEAN,
-    remarks       TEXT,
-    fetched_at    TIMESTAMP  NOT NULL DEFAULT NOW(),
-    hour_of_day   SMALLINT     NOT NULL,
-    day_of_week   SMALLINT     NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_ctb_eta_route   ON ctb.eta (route, dir);
-CREATE INDEX IF NOT EXISTS idx_ctb_eta_fetched ON ctb.eta (fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ctb_eta_hour    ON ctb.eta (hour_of_day, day_of_week);
-CREATE INDEX IF NOT EXISTS idx_ctb_eta_delay   ON ctb.eta (is_scheduled, fetched_at DESC);
-
--- ============================================================
--- GMB
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS gmb.stops (
-    stop_id   BIGINT  PRIMARY KEY,  -- GMB stop IDs are integers
-    name_en   TEXT,
-    name_tc   TEXT,
-    region    VARCHAR(10)           -- HKI / KLN / NT
-);
-
-CREATE TABLE IF NOT EXISTS gmb.routes (
-    route_id   INTEGER      NOT NULL,
-    route_seq  SMALLINT     NOT NULL,  -- 1=outbound, 2=inbound
-    route_code VARCHAR(20),
-    region     VARCHAR(10),
-    orig_en    TEXT,
-    dest_en    TEXT,
-    PRIMARY KEY (route_id, route_seq)
-);
-
-CREATE TABLE IF NOT EXISTS gmb.headways (
-    route_id    INTEGER   NOT NULL,
-    route_seq   SMALLINT  NOT NULL,
-    start_time  TIME      NOT NULL,
-    end_time    TIME      NOT NULL,
-    frequency   SMALLINT,            -- scheduled minutes between buses
-    is_weekday  BOOLEAN,
-    is_holiday  BOOLEAN,
-    PRIMARY KEY (route_id, route_seq, start_time, is_weekday, is_holiday)
-);
-
-CREATE TABLE IF NOT EXISTS gmb.eta (
-    id            BIGSERIAL    PRIMARY KEY,
-    route_id      INTEGER      NOT NULL,
-    route_code    VARCHAR(20),
-    region        VARCHAR(10),
-    route_seq     SMALLINT     NOT NULL,
-    stop_id       BIGINT       NOT NULL,
-    eta_seq       SMALLINT     NOT NULL,
-    wait_minutes  SMALLINT,
-    eta_timestamp TIMESTAMP,
-    is_scheduled  BOOLEAN,
-    remarks       TEXT,
-    fetched_at    TIMESTAMP  NOT NULL DEFAULT NOW(),
-    hour_of_day   SMALLINT     NOT NULL,
-    day_of_week   SMALLINT     NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_gmb_eta_route   ON gmb.eta (route_id, route_seq);
-CREATE INDEX IF NOT EXISTS idx_gmb_eta_fetched ON gmb.eta (fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_gmb_eta_hour    ON gmb.eta (hour_of_day, day_of_week);
-CREATE INDEX IF NOT EXISTS idx_gmb_eta_delay   ON gmb.eta (is_scheduled, fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_gmb_eta_region  ON gmb.eta (region, fetched_at DESC);
-
--- ============================================================
 -- MTR
 -- ============================================================
 
@@ -168,3 +71,143 @@ CREATE TABLE IF NOT EXISTS mtr.eta (
 CREATE INDEX IF NOT EXISTS idx_mtr_eta_line    ON mtr.eta (line, station);
 CREATE INDEX IF NOT EXISTS idx_mtr_eta_fetched ON mtr.eta (fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mtr_eta_hour    ON mtr.eta (hour_of_day, day_of_week);
+
+-- ============================================================
+-- Analytics Views
+-- ============================================================
+
+-- ── Shared helper: classify remark into delay_type ───────────
+-- 'delay'     : bus explicitly flagged as running late
+-- 'final_bus' : last service of the day (not a reliability issue)
+-- 'on_time'   : scheduled or no remark
+
+-- ── KMB ──────────────────────────────────────────────────────
+
+-- Recent delay events (rolling 1-hour window) with names
+CREATE OR REPLACE VIEW kmb.v_recent_delays AS
+SELECT
+  e.route,
+  COALESCE(r.orig_en || ' → ' || r.dest_en, e.route) AS route_name,
+  e.dir,
+  e.stop_id,
+  s.name_en                                           AS stop_name,
+  e.wait_minutes,
+  e.eta_seq,
+  e.remarks,
+  CASE
+    WHEN e.remarks = 'Final Bus'           THEN 'final_bus'
+    WHEN e.remarks LIKE 'Delayed journey%' THEN 'delay'
+    WHEN e.remarks = 'Moving slowly'       THEN 'delay'
+    ELSE 'other'
+  END                                                 AS delay_type,
+  e.fetched_at,
+  e.hour_of_day,
+  e.day_of_week
+FROM kmb.eta e
+LEFT JOIN kmb.routes r ON r.route = e.route AND r.bound = e.dir
+LEFT JOIN kmb.stops  s ON s.stop_id = e.stop_id
+WHERE e.is_scheduled = false
+  AND e.fetched_at > NOW() - INTERVAL '1 hour'
+ORDER BY e.fetched_at DESC;
+
+-- Routes ranked by true delay % (Final Bus excluded — not a reliability issue)
+-- Requires at least 20 next-bus samples for statistical significance
+CREATE OR REPLACE VIEW kmb.v_worst_routes AS
+SELECT
+  e.route,
+  COALESCE(r.orig_en || ' → ' || r.dest_en, e.route) AS route_name,
+  e.dir,
+  COUNT(*)                                            AS total_samples,
+  SUM(CASE WHEN e.remarks LIKE 'Delayed journey%'
+            OR e.remarks = 'Moving slowly'
+           THEN 1 ELSE 0 END)                         AS true_delay_count,
+  SUM(CASE WHEN e.remarks = 'Final Bus'
+           THEN 1 ELSE 0 END)                         AS final_bus_count,
+  ROUND(
+    100.0 * SUM(CASE WHEN e.remarks LIKE 'Delayed journey%'
+                      OR e.remarks = 'Moving slowly'
+                     THEN 1 ELSE 0 END)
+    / NULLIF(COUNT(*), 0), 1)                         AS delay_pct,
+  ROUND(AVG(e.wait_minutes)::numeric, 1)              AS avg_wait_min,
+  ROUND(PERCENTILE_CONT(0.95)
+        WITHIN GROUP (ORDER BY e.wait_minutes)::numeric, 1) AS p95_wait_min
+FROM kmb.eta e
+LEFT JOIN kmb.routes r ON r.route = e.route AND r.bound = e.dir
+WHERE e.eta_seq = 1
+  AND e.wait_minutes IS NOT NULL
+GROUP BY e.route, e.dir, r.orig_en, r.dest_en
+HAVING COUNT(*) >= 20
+ORDER BY delay_pct DESC;
+
+-- Delay frequency by hour-of-day across all routes
+CREATE OR REPLACE VIEW kmb.v_delay_by_hour AS
+SELECT
+  hour_of_day,
+  day_of_week,
+  COUNT(*)                                            AS total_samples,
+  SUM(CASE WHEN remarks LIKE 'Delayed journey%'
+            OR remarks = 'Moving slowly'
+           THEN 1 ELSE 0 END)                         AS delay_count,
+  SUM(CASE WHEN remarks = 'Final Bus'
+           THEN 1 ELSE 0 END)                         AS final_bus_count,
+  ROUND(
+    100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%'
+                      OR remarks = 'Moving slowly'
+                     THEN 1 ELSE 0 END)
+    / NULLIF(COUNT(*), 0), 1)                         AS delay_pct,
+  ROUND(AVG(wait_minutes)::numeric, 1)                AS avg_wait_min
+FROM kmb.eta
+WHERE eta_seq = 1
+  AND wait_minutes IS NOT NULL
+GROUP BY hour_of_day, day_of_week
+ORDER BY hour_of_day, day_of_week;
+
+-- Materialized view: per-route reliability aggregated across all collected data
+-- Used by Grafana for fast dashboard queries — refresh hourly via eta-fetcher
+CREATE MATERIALIZED VIEW IF NOT EXISTS kmb.mv_route_reliability AS
+SELECT
+  route,
+  dir,
+  hour_of_day,
+  day_of_week,
+  COUNT(*)                                            AS sample_count,
+  ROUND(AVG(wait_minutes)::numeric, 1)                AS avg_wait_min,
+  ROUND(PERCENTILE_CONT(0.5)
+        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p50_wait_min,
+  ROUND(PERCENTILE_CONT(0.95)
+        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p95_wait_min,
+  ROUND(
+    100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%'
+                      OR remarks = 'Moving slowly'
+                     THEN 1 ELSE 0 END)
+    / NULLIF(COUNT(*), 0), 1)                         AS delay_pct
+FROM kmb.eta
+WHERE eta_seq = 1
+  AND wait_minutes IS NOT NULL
+GROUP BY route, dir, hour_of_day, day_of_week
+WITH NO DATA;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_route_reliability
+  ON kmb.mv_route_reliability (route, dir, hour_of_day, day_of_week);
+
+-- ── MTR ──────────────────────────────────────────────────────
+
+-- Per-line/station hourly wait stats
+CREATE OR REPLACE VIEW mtr.v_station_hourly AS
+SELECT
+  line,
+  station,
+  dir,
+  hour_of_day,
+  day_of_week,
+  COUNT(*)                                            AS sample_count,
+  ROUND(AVG(wait_minutes)::numeric, 1)                AS avg_wait_min,
+  ROUND(PERCENTILE_CONT(0.5)
+        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p50_wait_min,
+  ROUND(PERCENTILE_CONT(0.95)
+        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p95_wait_min,
+  MAX(wait_minutes)                                   AS max_wait_min
+FROM mtr.eta
+WHERE eta_seq = 1
+  AND wait_minutes IS NOT NULL
+GROUP BY line, station, dir, hour_of_day, day_of_week;
