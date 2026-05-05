@@ -33,7 +33,7 @@ redis.on('error', err => console.error('[Redis] error:', err.message));
 
 const stats = { messagesConsumed: 0, alertsGenerated: 0, errors: 0 };
 
-const DELAY_REMARKS = new Set(['Bus not in service', 'Last Bus', 'Scheduled Bus']);
+const DELAY_REMARKS = new Set(['Bus not in service', 'Last Bus']);
 
 async function ensureSchema() {
   await pool.query(`

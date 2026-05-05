@@ -1,0 +1,34 @@
+---
+# ServiceAccount for the spark-analytics OpenFaaS function pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-analytics-sa
+  namespace: openfaas-fn
+
+---
+# Allow the function to create/get/list Jobs in hk-bus namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-job-creator
+  namespace: hk-bus
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-analytics-job-creator
+  namespace: hk-bus
+subjects:
+  - kind: ServiceAccount
+    name: spark-analytics-sa
+    namespace: openfaas-fn
+roleRef:
+  kind: Role
+  name: spark-job-creator
+  apiGroup: rbac.authorization.k8s.io
