@@ -1,510 +1,443 @@
-# Full Stack Deployment Guide
+# Deployment Guide
 
-Complete step-by-step instructions for deploying the HK Transit Real-Time Tracker on a fresh server from zero. Follow the steps in order — each section has an expected output so you can verify before continuing.
-
----
-
-## Server Requirements
-
-| Requirement | Minimum |
-|---|---|
-| OS | Ubuntu 22.04 or 24.04 (x86_64) |
-| CPU | 2 cores |
-| RAM | 8 GB |
-| Disk | 20 GB |
-| Inbound ports | 22 (SSH), 80 (web app), 30400 (Grafana), 31112 (OpenFaaS gateway) |
-
-If using AWS EC2, add these ports to your security group inbound rules before starting.
+Step-by-step instructions for deploying the HK Transit Real-Time Tracker locally (kind) or on a production server (k3s on EC2).
 
 ---
 
-## Step 1 — Install Docker
+## Prerequisites
+
+| Tool | Version | Install |
+|---|---|---|
+| **Docker Desktop** | 4.x+ | https://www.docker.com/products/docker-desktop — set memory limit to **6 GB+** in Settings → Resources |
+| **kubectl** | 1.28+ | `brew install kubectl` (Mac) or https://kubernetes.io/docs/tasks/tools |
+| **kind** | 0.20+ | `brew install kind` (Mac) or https://kind.sigs.k8s.io/docs/user/quick-start/#installation |
+| **git** | any | pre-installed on most systems |
+
+> **Docker memory**: The Spark analytics job needs 4 GB of driver memory. In Docker Desktop → Settings → Resources, set Memory to at least **6 GB** before running the Spark job.
+
+---
+
+## Part A — Local Deployment (kind)
+
+This path runs the full stack on your laptop using [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker). No cloud account needed.
+
+### 1. Clone the repository
 
 ```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Verify
-docker run --rm hello-world
-```
-
-Expected: `Hello from Docker!`
-
----
-
-## Step 2 — Install k3s
-
-k3s is a lightweight Kubernetes distribution — single binary, no separate etcd.
-
-```bash
-curl -sfL https://get.k3s.io | sh -
-
-# Verify
-sudo k3s kubectl get nodes
-```
-
-Expected:
-```
-NAME     STATUS   ROLES           AGE   VERSION
-<host>   Ready    control-plane   30s   v1.xx.x+k3s1
-```
-
----
-
-## Step 3 — Install Helm
-
-```bash
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Verify
-helm version
-```
-
----
-
-## Step 4 — Clone the Repository
-
-```bash
-git clone https://github.com/Anson-1/hk-bus.git
+git clone <repo-url> hk-bus
 cd hk-bus
 ```
 
----
-
-## Step 5 — Build All Docker Images
-
-> **Why build locally?**
-> The pre-built images on Docker Hub are ARM64 (built on Apple Silicon).
-> Any x86_64 server must build from source — otherwise pods crash with
-> `exec format error`.
-
-Build all 5 images. This takes about 3–5 minutes total.
+### 2. Create the kind cluster
 
 ```bash
-# Core services
-docker build -t hk-bus-eta-fetcher:local \
-  -f k8s/eta-fetcher/Dockerfile k8s/eta-fetcher/
-
-docker build -t hk-bus-web-app:local \
-  -f web-app/Dockerfile web-app/
-
-# OpenFaaS functions
-docker build -t hk-bus-kmb-fetcher:local \
-  -f functions/kmb-fetcher/Dockerfile functions/kmb-fetcher/
-
-docker build -t hk-bus-compute-analytics:local \
-  -f functions/compute-analytics/Dockerfile functions/compute-analytics/
-
-docker build -t hk-bus-delay-alerter:local \
-  -f k8s/delay-alerter/Dockerfile k8s/delay-alerter/
+kind create cluster --name hk-bus
 ```
 
-Verify all images exist:
+Verify:
 ```bash
-docker images | grep hk-bus
+kubectl cluster-info --context kind-hk-bus
+# Kubernetes control plane is running at https://127.0.0.1:...
 ```
 
-Expected (5 rows):
-```
-hk-bus-delay-alerter        local   ...
-hk-bus-compute-analytics    local   ...
-hk-bus-kmb-fetcher          local   ...
-hk-bus-web-app              local   ...
-hk-bus-eta-fetcher          local   ...
-```
+### 3. Pre-load Docker images into kind
 
----
-
-## Step 6 — Import Images into k3s
-
-k3s uses its own `containerd` runtime and does **not** share Docker's image cache.
-Every image must be explicitly imported.
+kind uses its own containerd runtime and does not share the Docker image cache. Pre-loading avoids slow pulls during pod startup.
 
 ```bash
-for img in hk-bus-eta-fetcher hk-bus-web-app hk-bus-kmb-fetcher \
-           hk-bus-compute-analytics hk-bus-delay-alerter; do
-  echo "Importing ${img}:local ..."
-  docker save ${img}:local | sudo k3s ctr images import -
-done
+# Pull all images first
+docker pull ansonhui123/hk-bus-web-app:latest
+docker pull ansonhui123/hk-bus-eta-fetcher:latest
+docker pull ansonhui123/kmb-fetcher:latest
+docker pull ansonhui123/compute-analytics:latest
+docker pull ansonhui123/delay-alerter:latest
+docker pull ansonhui123/spark-analytics:latest
+docker pull ansonhui123/hk-bus-spark:latest
+docker pull postgres:15
+docker pull redis:7-alpine
+docker pull grafana/grafana:10.4.0
+docker pull curlimages/curl:latest
+
+# Load into kind cluster
+kind load docker-image ansonhui123/hk-bus-web-app:latest     --name hk-bus
+kind load docker-image ansonhui123/hk-bus-eta-fetcher:latest  --name hk-bus
+kind load docker-image ansonhui123/kmb-fetcher:latest         --name hk-bus
+kind load docker-image ansonhui123/compute-analytics:latest   --name hk-bus
+kind load docker-image ansonhui123/delay-alerter:latest       --name hk-bus
+kind load docker-image ansonhui123/spark-analytics:latest     --name hk-bus
+kind load docker-image ansonhui123/hk-bus-spark:latest        --name hk-bus
+kind load docker-image postgres:15                            --name hk-bus
+kind load docker-image redis:7-alpine                         --name hk-bus
+kind load docker-image grafana/grafana:10.4.0                 --name hk-bus
+kind load docker-image curlimages/curl:latest                 --name hk-bus
 ```
 
-Verify imports:
+### 4. Deploy core infrastructure
+
 ```bash
-sudo k3s ctr -n k8s.io images ls | grep hk-bus
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres/secret.yaml
+kubectl apply -f k8s/postgres/postgres.yaml
+kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/eta-fetcher/deployment.yaml
+kubectl apply -f k8s/backend-api-deployment.yaml
+kubectl apply -f k8s/monitoring/grafana.yaml
 ```
 
-Expected: 5 lines, all showing `linux/amd64`.
-
----
-
-## Step 7 — Deploy Core Infrastructure
-
-Apply manifests in this exact order. Each depends on the previous.
+Wait for core pods to be ready (takes ~60 seconds):
 
 ```bash
-# Namespace
-sudo k3s kubectl apply -f k8s/namespace.yaml
-
-# Database credentials
-sudo k3s kubectl apply -f k8s/postgres/secret.yaml
-
-# PostgreSQL (StatefulSet + PVC + schema init)
-sudo k3s kubectl apply -f k8s/postgres/postgres.yaml
-
-# Redis
-sudo k3s kubectl apply -f k8s/redis.yaml
+kubectl get pods -n hk-bus -w
 ```
 
-Wait for Postgres and Redis to be ready before continuing:
-```bash
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=postgres -n hk-bus --timeout=120s
+Expected — all `1/1 Running`:
+```
+NAME                         READY   STATUS    RESTARTS   AGE
+eta-fetcher-xxx              1/1     Running   0          60s
+grafana-xxx                  1/1     Running   0          60s
+hk-bus-api-xxx               1/1     Running   0          60s
+postgres-0                   1/1     Running   0          60s
+redis-xxx                    1/1     Running   0          60s
+```
 
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=redis -n hk-bus --timeout=60s
+### 5. Deploy OpenFaaS functions and CronJobs
+
+The functions run in a separate namespace `openfaas-fn`. First copy the database secret there:
+
+```bash
+kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
+
+PG_PASS=$(kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
+kubectl create secret generic postgres-secret \
+  -n openfaas-fn \
+  --from-literal=password=${PG_PASS} \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Deploy the functions, CronJobs, and RBAC:
+
+```bash
+kubectl apply -f k8s/spark/rbac.yaml
+kubectl apply -f k8s/openfaas/functions-deployment.yaml
+```
+
+This deploys:
+- **kmb-fetcher** — fetches KMB ETA every minute → publishes to Redis Stream
+- **compute-analytics** — computes avg/P95 wait times from `kmb.eta` every hour
+- **spark-analytics** — triggers the PySpark batch job every Sunday 2 AM HKT
+- **delay-alerter** — Redis Stream consumer → writes delay events to PostgreSQL
+
+### 6. Load sample data into PostgreSQL
+
+The Spark analytics results (pre-computed from 14.6 M ETA records) and MTR data are loaded from the local Docker image of PostgreSQL. Start a local postgres container to extract from:
+
+```bash
+docker compose -f docker-compose.collector.yml up -d postgres
+# Wait ~10 seconds for it to be healthy
+
+docker exec hk-bus-postgres psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM mtr.eta;"
+# Should show 295973
+```
+
+Load into K8s PostgreSQL:
+
+```bash
+# Spark analytics results (6634 + 17 + 697 rows — fast)
+docker exec hk-bus-postgres pg_dump -U postgres -d hkbus \
+  -t kmb.spark_analytics -t kmb.spark_peak_hours -t kmb.spark_route_reliability \
+  --data-only -F plain \
+  | kubectl exec -i -n hk-bus postgres-0 -- psql -U postgres -d hkbus
+
+# MTR ETA data (295 K rows — ~30 seconds)
+docker exec hk-bus-postgres pg_dump -U postgres -d hkbus \
+  -t mtr.eta --data-only -F plain \
+  | kubectl exec -i -n hk-bus postgres-0 -- psql -U postgres -d hkbus
+
+# KMB ETA sample (100 K rows — ~15 seconds)
+docker exec hk-bus-postgres psql -U postgres -d hkbus \
+  -c "\COPY (SELECT * FROM kmb.eta LIMIT 100000) TO STDOUT" \
+  | kubectl exec -i -n hk-bus postgres-0 -- psql -U postgres -d hkbus \
+  -c "\COPY kmb.eta FROM STDIN"
+
+docker compose -f docker-compose.collector.yml stop postgres
+```
+
+Verify:
+
+```bash
+kubectl exec -n hk-bus postgres-0 -- psql -U postgres -d hkbus \
+  -c "SELECT schemaname, relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 8;"
 ```
 
 Expected:
 ```
-pod/postgres-0 condition met
-pod/redis-xxx condition met
+ schemaname |         relname         | n_live_tup
+------------+-------------------------+------------
+ mtr        | eta                     |     295973
+ kmb        | eta                     |     100000
+ kmb        | spark_analytics         |       6634
+ public     | delay_alerts            |       ...
+ kmb        | spark_route_reliability |        697
+ kmb        | spark_peak_hours        |         17
 ```
 
-Verify the database schema was initialised:
+### 7. Access the services
+
+kind does not have a load balancer, so use `kubectl port-forward`:
+
 ```bash
-sudo k3s kubectl exec -n hk-bus statefulset/postgres -- \
-  psql -U postgres -d hkbus -c "\dn"
+# Web app — http://localhost:3000
+kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000
+
+# Grafana — http://localhost:3001  (admin / hkbus123)
+kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000
 ```
 
-Expected: schemas `kmb`, `mtr`, `public` listed.
-
----
-
-## Step 8 — Deploy Data Collection (eta-fetcher)
-
-The eta-fetcher polls KMB every 15s and MTR every 30s and writes to PostgreSQL.
+Open two separate terminals (one per port-forward), or run them as background processes:
 
 ```bash
-sudo k3s kubectl apply -f k8s/eta-fetcher/deployment.yaml
+kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000 &
+kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000 &
 ```
 
-Wait for it to start:
-```bash
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=eta-fetcher -n hk-bus --timeout=60s
-```
-
-Check it is collecting data (wait ~30 seconds then run):
-```bash
-sudo k3s kubectl logs -n hk-bus deployment/eta-fetcher --tail=10
-```
-
-Expected: lines like `[KMB] Cycle done in 40.2s | inserted=12000 errors=0`
-
----
-
-## Step 9 — Deploy Web App and Grafana
+### 8. Verify the pipeline is live
 
 ```bash
-sudo k3s kubectl apply -f k8s/backend-api-deployment.yaml
-sudo k3s kubectl apply -f k8s/monitoring/grafana.yaml
-sudo k3s kubectl apply -f k8s/ingress.yaml
-```
+# API health
+curl http://localhost:3000/api/health
+# → {"status":"ok","timestamp":"..."}
 
-Wait for both to be ready:
-```bash
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=hk-bus-api -n hk-bus --timeout=60s
+# MTR ETA (live data from K8s postgres)
+curl "http://localhost:3000/api/mtr-eta?line=TCL&station=HOK"
 
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=grafana -n hk-bus --timeout=60s
-```
+# Recent delay alerts written by delay-alerter
+curl http://localhost:3000/api/alerts/recent
 
-Quick smoke test:
-```bash
-curl -s http://localhost/api/health
-```
+# Redis Stream — kmb-fetcher publishes here every minute
+kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
 
-Expected: `{"status":"ok","timestamp":"..."}`
-
----
-
-## Step 10 — Deploy OpenFaaS (Lambda Replacement)
-
-```bash
-# Add Helm repo (must run as sudo to access k3s kubeconfig)
-sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml \
-  helm repo add openfaas https://openfaas.github.io/faas-netes/
-
-sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm repo update
-
-# Create openfaas and openfaas-fn namespaces
-sudo k3s kubectl apply -f \
-  https://raw.githubusercontent.com/openfaas/faas-netes/master/namespaces.yml
-
-# Install OpenFaaS
-sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml \
-  helm install openfaas openfaas/openfaas \
-  --namespace openfaas \
-  --set functionNamespace=openfaas-fn \
-  --set basic_auth=false \
-  --set generateBasicAuth=false \
-  --set serviceType=NodePort \
-  --set gateway.nodePort=31112 \
-  --set gateway.readTimeout=300s \
-  --set gateway.writeTimeout=300s \
-  --set gateway.upstreamTimeout=280s
-```
-
-Wait for OpenFaaS pods:
-```bash
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=gateway -n openfaas --timeout=120s
-```
-
-Verify the gateway is up:
-```bash
-curl -s http://127.0.0.1:31112/healthz
-```
-
-Expected: `OK`
-
----
-
-## Step 11 — Deploy OpenFaaS Functions
-
-The OpenFaaS Community Edition restricts deployment of local images via its REST
-API. Functions are instead deployed as standard K8s Deployments in the
-`openfaas-fn` namespace — the gateway auto-discovers and proxies to any service
-there by name.
-
-```bash
-# Copy the postgres secret into openfaas-fn namespace
-# (compute-analytics needs DB access)
-PG_PASS=$(sudo k3s kubectl get secret postgres-secret \
-  -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
-
-sudo k3s kubectl create secret generic postgres-secret \
-  -n openfaas-fn --from-literal=password=${PG_PASS}
-
-# Deploy functions, CronJobs, and delay-alerter
-sudo k3s kubectl apply -f k8s/openfaas/functions-deployment.yaml
-```
-
-Wait for function pods:
-```bash
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l faas_function=kmb-fetcher -n openfaas-fn --timeout=60s
-
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l faas_function=compute-analytics -n openfaas-fn --timeout=60s
-
-sudo k3s kubectl wait --for=condition=ready pod \
-  -l app=delay-alerter -n hk-bus --timeout=60s
+# Delay alerts table
+kubectl exec -n hk-bus postgres-0 -- \
+  psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM public.delay_alerts;"
 ```
 
 ---
 
-## Step 12 — Verify the Full Pipeline
+## Part B — Production Deployment (k3s on EC2)
 
-### 12a. Check all pods are running
+For an always-on deployment with real traffic. Tested on Ubuntu 22.04 x86_64, 4 vCPU, 8 GB RAM.
 
-```bash
-echo "=== hk-bus ===" && sudo k3s kubectl get pods -n hk-bus
-echo "=== openfaas ===" && sudo k3s kubectl get pods -n openfaas
-echo "=== openfaas-fn ===" && sudo k3s kubectl get pods -n openfaas-fn
-```
+### Security group / firewall rules
 
-Expected — all pods `1/1 Running`:
+Open these inbound ports:
 
-| Namespace | Pod | Role |
-|---|---|---|
-| hk-bus | postgres-0 | Database |
-| hk-bus | redis-xxx | Cache + Stream bus |
-| hk-bus | eta-fetcher-xxx | Continuous ETA collector |
-| hk-bus | hk-bus-api-xxx | Web app backend |
-| hk-bus | grafana-xxx | Dashboards |
-| hk-bus | delay-alerter-xxx | Redis Stream consumer |
-| openfaas | gateway-xxx (2/2) | OpenFaaS gateway + provider |
-| openfaas | nats-xxx | Message bus |
-| openfaas | queue-worker-xxx | Async function queue |
-| openfaas | prometheus-xxx | Metrics |
-| openfaas | alertmanager-xxx | Alerts |
-| openfaas-fn | kmb-fetcher-xxx | ETA fetch function |
-| openfaas-fn | compute-analytics-xxx | Analytics function |
-
-### 12b. List registered OpenFaaS functions
-
-```bash
-curl -s http://127.0.0.1:31112/system/functions | python3 -m json.tool
-```
-
-Expected: JSON array with `kmb-fetcher` and `compute-analytics`, each showing
-`"availableReplicas": 1`.
-
-### 12c. Invoke kmb-fetcher via the gateway
-
-```bash
-curl -s -X POST http://127.0.0.1:31112/function/kmb-fetcher \
-  -H "Content-Type: application/json" -d '{}'
-```
-
-Expected (completes in ~5 seconds):
-```json
-{"published": 2559, "routes": 22, "errors": 0}
-```
-
-### 12d. Invoke compute-analytics via the gateway
-
-```bash
-curl -s -X POST http://127.0.0.1:31112/function/compute-analytics \
-  -H "Content-Type: application/json" -d '{}'
-```
-
-Expected (completes in ~30–60 seconds):
-```json
-{"ok": true, "rowsAffected": 1296, "elapsedMs": 53000}
-```
-
-### 12e. Check the Redis Stream
-
-```bash
-sudo k3s kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
-```
-
-Expected: a positive number (grows each time kmb-fetcher runs).
-
-### 12f. Check the database
-
-```bash
-sudo k3s kubectl exec -n hk-bus statefulset/postgres -- \
-  psql -U postgres -d hkbus -c "
-    SELECT 'kmb.routes'      AS table, COUNT(*) FROM kmb.routes
-    UNION ALL
-    SELECT 'kmb.stops',               COUNT(*) FROM kmb.stops
-    UNION ALL
-    SELECT 'kmb.eta',                 COUNT(*) FROM kmb.eta
-    UNION ALL
-    SELECT 'mtr.eta',                 COUNT(*) FROM mtr.eta
-    UNION ALL
-    SELECT 'kmb.analytics',           COUNT(*) FROM kmb.analytics
-    UNION ALL
-    SELECT 'public.delay_alerts',     COUNT(*) FROM public.delay_alerts;"
-```
-
-After ~5 minutes of running:
-
-| Table | Expected rows |
+| Port | Service |
 |---|---|
-| kmb.routes | ~1,316 |
-| kmb.stops | ~6,725 |
-| kmb.eta | grows continuously |
-| mtr.eta | grows continuously |
-| kmb.analytics | populated after first compute-analytics run |
-| public.delay_alerts | populated after first kmb-fetcher + delay-alerter cycle |
+| 22 | SSH |
+| 80 | Web app (Traefik ingress) |
+| 30400 | Grafana NodePort |
 
----
+### 1. Install Docker and k3s
 
-## Step 13 — Access the Services
+```bash
+# Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
 
-Get the server's public IP:
+# k3s
+curl -sfL https://get.k3s.io | sh -
+sudo k3s kubectl get nodes
+```
+
+### 2. Clone the repository
+
+```bash
+git clone <repo-url> hk-bus
+cd hk-bus
+```
+
+### 3. Deploy everything
+
+On k3s, images are pulled directly from Docker Hub — no manual loading needed.
+
+```bash
+# Shortcut: k3s kubectl = sudo k3s kubectl
+alias k='sudo k3s kubectl'
+
+k apply -f k8s/namespace.yaml
+k apply -f k8s/postgres/secret.yaml
+k apply -f k8s/postgres/postgres.yaml
+k apply -f k8s/redis.yaml
+k apply -f k8s/eta-fetcher/deployment.yaml
+k apply -f k8s/backend-api-deployment.yaml
+k apply -f k8s/monitoring/grafana.yaml
+k apply -f k8s/ingress.yaml
+
+# Wait for core pods
+k get pods -n hk-bus -w
+```
+
+### 4. Deploy OpenFaaS functions
+
+```bash
+k create namespace openfaas-fn --dry-run=client -o yaml | k apply -f -
+
+PG_PASS=$(k get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
+k create secret generic postgres-secret \
+  -n openfaas-fn --from-literal=password=${PG_PASS} \
+  --dry-run=client -o yaml | k apply -f -
+
+k apply -f k8s/spark/rbac.yaml
+k apply -f k8s/openfaas/functions-deployment.yaml
+```
+
+### 5. Access
+
+| Service | URL |
+|---|---|
+| Web app | `http://<SERVER_IP>/` |
+| API health | `http://<SERVER_IP>/api/health` |
+| Grafana | `http://<SERVER_IP>:30400` — login: `admin` / `hkbus123` |
+
+Get your server's public IP:
 ```bash
 curl -s http://checkip.amazonaws.com
 ```
 
-| Service | URL | Notes |
-|---|---|---|
-| **Web App** | `http://<IP>/` | KMB bus search + MTR live ETA |
-| **API health** | `http://<IP>/api/health` | Should return `{"status":"ok"}` |
-| **Grafana** | `http://<IP>:30400` | 3 dashboards, no login required |
-| **OpenFaaS Gateway** | `http://<IP>:31112` | Function list + invocation |
-
-> Make sure ports **80**, **30400**, and **31112** are open in your firewall
-> or AWS security group.
-
 ---
 
-## Automatic CronJob Schedule
+## Part C — Running the Spark Analytics Job Locally
 
-Once deployed, functions run automatically — no manual invocation needed:
+The Spark job analyses the raw KMB ETA data and writes results to PostgreSQL. The results are already pre-loaded in step 6 above, but you can re-run the analysis any time.
 
-| Job | Schedule | What it does |
-|---|---|---|
-| `kmb-fetcher-cron` | Every minute | Fetch 22 routes → publish to Redis Stream |
-| `compute-analytics-cron` | Every hour | Compute avg/P95 wait times → write to `kmb.analytics` |
+### Requirements
 
-Check CronJob history:
+- Docker Desktop with **6 GB memory** (Settings → Resources → Memory)
+- Local postgres running with data (start via `docker compose -f docker-compose.collector.yml up -d postgres`)
+
+### Run
+
 ```bash
-sudo k3s kubectl get cronjobs,jobs -n hk-bus
+docker run --rm \
+  --network host \
+  --memory=6g \
+  -e DB_HOST=127.0.0.1 \
+  -e DB_PORT=5432 \
+  -e DB_NAME=hkbus \
+  -e DB_USER=postgres \
+  -e DB_PASSWORD=postgres \
+  ansonhui123/hk-bus-spark:latest
 ```
+
+The job runs for ~5–10 minutes and writes three tables:
+
+| Table | Rows | Description |
+|---|---|---|
+| `kmb.spark_analytics` | ~6,600 | Avg/P95 wait per route per hour |
+| `kmb.spark_peak_hours` | 17 | System-wide avg/P95 by hour of day |
+| `kmb.spark_route_reliability` | ~700 | Per-route reliability score |
+
+View results in Grafana → **Spark Analytics (Batch)** dashboard.
 
 ---
 
 ## Troubleshooting
 
-### Pod stays in `CrashLoopBackOff`
+**Pods stuck in `ImagePullBackOff`**
 
-Check logs:
 ```bash
-sudo k3s kubectl logs -n hk-bus <pod-name> --tail=30
+kubectl describe pod <pod-name> -n hk-bus | grep -A5 Events
 ```
 
-**`exec format error`** — Image built for wrong architecture.
-Rebuild and re-import (steps 5–6).
-
-**`password authentication failed`** — Postgres secret mismatch.
+If it can't pull from Docker Hub, pre-load the image manually:
 ```bash
-sudo k3s kubectl get secret postgres-secret -n hk-bus \
-  -o jsonpath='{.data.password}' | base64 -d
-```
-Should print `postgres`.
-
-### OpenFaaS gateway returns 502
-
-The function pod isn't ready yet. Check:
-```bash
-sudo k3s kubectl get pods -n openfaas-fn
-sudo k3s kubectl logs -n openfaas-fn deployment/kmb-fetcher --tail=10
+docker pull <image>
+kind load docker-image <image> --name hk-bus
 ```
 
-### Grafana shows "No data"
+**`openfaas-fn` pods in `CreateContainerConfigError`**
 
-The eta-fetcher needs 1–2 minutes to complete its first cycle. Check:
+The `postgres-secret` is missing from the `openfaas-fn` namespace. Re-run step 5.
+
+**Redis in `CrashLoopBackOff`**
+
+Usually a liveness probe timeout. Check logs:
 ```bash
-sudo k3s kubectl logs -n hk-bus deployment/eta-fetcher --tail=5
+kubectl logs -n hk-bus deployment/redis --previous
+```
+If it shows `SIGTERM` from liveness probe failure, the fix is already in `k8s/redis.yaml` (failureThreshold: 5, timeoutSeconds: 5).
+
+**Spark job OOM (Java heap space)**
+
+Increase Docker Desktop memory to 8 GB. The job needs ~4 GB for the driver heap plus OS overhead.
+
+**`curl` returns 502 / proxy error**
+
+If your machine has an HTTP proxy configured (e.g. `http_proxy` env var), add `--noproxy localhost` to all curl commands targeting localhost:
+```bash
+curl --noproxy localhost http://localhost:3000/api/health
 ```
 
-### `/api/routes` returns error
+**Grafana shows "No data" on time-series panels**
 
-The routes table is empty — eta-fetcher hasn't completed its first cycle yet.
-Wait 60 seconds and retry.
-
-### compute-analytics CronJob not running
-
-The CronJob runs every hour. Trigger it manually to verify it works:
-```bash
-curl -s -X POST http://127.0.0.1:31112/function/compute-analytics \
-  -H "Content-Type: application/json" -d '{}'
-```
+The KMB time-series panels (`Delay Events Over Time`, `Recent Delay Events`) require live data in `kmb.eta` from the last 3 hours. On a fresh kind cluster these will be empty until the `kmb-fetcher` CronJob has run for a few minutes and the data has been collected. The **Spark Analytics (Batch)** dashboard is static and always shows data.
 
 ---
 
-## Full Re-deploy (Wipe and Start Over)
+## Updating Spark Analytics with a Full Day of EC2 Data
 
-If something goes wrong and you want a clean slate:
+Once EC2 has collected a full day of KMB ETA data, run the following to refresh the Spark analytics results:
+
+### 1. Dump KMB ETA data from EC2 postgres
 
 ```bash
-# Delete everything in hk-bus namespace
-sudo k3s kubectl delete namespace hk-bus
+# SSH into EC2 and dump kmb.eta
+docker exec <ec2-postgres-container> pg_dump -U postgres -d hkbus \
+  -t kmb.eta --data-only -F plain > kmb_eta_full.sql
 
-# Delete OpenFaaS
-sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml \
-  helm uninstall openfaas -n openfaas
-sudo k3s kubectl delete namespace openfaas openfaas-fn
-
-# Start over from Step 7
+# Copy to local machine
+scp -i <key.pem> ubuntu@<EC2_IP>:~/kmb_eta_full.sql .
 ```
 
-> Note: deleting the `hk-bus` namespace also deletes the PostgreSQL PVC
-> and all collected data.
+### 2. Load into local docker-compose postgres
+
+```bash
+docker compose -f docker-compose.collector.yml up -d postgres
+# Wait ~10s for postgres to be healthy
+
+# Truncate old sample data first
+docker exec hk-bus-postgres psql -U postgres -d hkbus \
+  -c "TRUNCATE kmb.eta RESTART IDENTITY;"
+
+# Load full dataset
+docker exec -i hk-bus-postgres psql -U postgres -d hkbus < kmb_eta_full.sql
+```
+
+### 3. Re-run the PySpark job
+
+> Requires Docker Desktop memory set to **6 GB+** (Settings → Resources → Memory).
+
+```bash
+docker run --rm \
+  --network host \
+  --memory=6g \
+  -e DB_HOST=127.0.0.1 \
+  -e DB_PORT=5432 \
+  -e DB_NAME=hkbus \
+  -e DB_USER=postgres \
+  -e DB_PASSWORD=postgres \
+  ansonhui123/hk-bus-spark:latest
+```
+
+The job takes ~5–10 minutes and overwrites `kmb.spark_analytics`, `kmb.spark_peak_hours`, and `kmb.spark_route_reliability`.
+
+### 4. Load updated results into K8s postgres
+
+```bash
+docker exec hk-bus-postgres pg_dump -U postgres -d hkbus \
+  -t kmb.spark_analytics -t kmb.spark_peak_hours -t kmb.spark_route_reliability \
+  --data-only -F plain \
+  | kubectl exec -i -n hk-bus postgres-0 -- psql -U postgres -d hkbus
+```
+
+The **Spark Analytics (Batch)** Grafana dashboard will reflect the updated results immediately.

@@ -33,7 +33,7 @@ redis.on('error', err => console.error('[Redis] error:', err.message));
 
 const stats = { messagesConsumed: 0, alertsGenerated: 0, errors: 0 };
 
-const DELAY_REMARKS = new Set(['Bus not in service', 'Last Bus']);
+const DELAY_REMARKS = new Set(['Delayed journey', 'Moving slowly']);
 
 async function ensureSchema() {
   await pool.query(`
@@ -51,6 +51,10 @@ async function ensureSchema() {
 
 async function handleMessage(fields) {
   stats.messagesConsumed++;
+
+  // Only process next-bus (eta_seq=1) to avoid false alerts from 2nd/3rd buses
+  if (fields.eta_seq !== '1') return;
+
   const route  = fields.route  || '';
   const stop   = fields.stop   || '';
   const rmk    = fields.rmk_en || '';
@@ -64,7 +68,8 @@ async function handleMessage(fields) {
     if (diff >= 0) waitMin = diff;
   }
 
-  const isDelayed = DELAY_REMARKS.has(rmk) || (waitMin !== null && waitMin > THRESHOLD_MIN);
+  // Alert only on explicit delay remarks
+  const isDelayed = DELAY_REMARKS.has(rmk) || rmk.startsWith('Delayed journey');
   if (!isDelayed || !route) return;
 
   try {

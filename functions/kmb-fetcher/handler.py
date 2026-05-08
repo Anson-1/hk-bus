@@ -8,17 +8,28 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-KMB_BASE    = "https://data.etabus.gov.hk/v1/transport/kmb"
-REDIS_URL   = os.environ.get("REDIS_URL",  "redis://redis.hk-bus.svc.cluster.local:6379")
-STREAM_KEY  = os.environ.get("STREAM_KEY", "kmb-eta-raw")
+KMB_BASE      = "https://data.etabus.gov.hk/v1/transport/kmb"
+REDIS_URL     = os.environ.get("REDIS_URL",  "redis://redis.hk-bus.svc.cluster.local:6379")
+STREAM_KEY    = os.environ.get("STREAM_KEY", "kmb-eta-raw")
 STREAM_MAXLEN = 50000
-CONCURRENCY = int(os.environ.get("CONCURRENCY", "8"))
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "stops_config.json")
+CONCURRENCY   = int(os.environ.get("CONCURRENCY", "8"))
 
-with open(CONFIG_PATH) as f:
-    CONFIG = json.load(f)
+_routes_cache: list[str] = []
 
-ROUTES = CONFIG["routes"]   # ["1", "1A", "2", ...]
+def load_routes() -> list[str]:
+    global _routes_cache
+    if _routes_cache:
+        return _routes_cache
+    try:
+        resp = requests.get(f"{KMB_BASE}/route", timeout=15)
+        resp.raise_for_status()
+        routes = list({r["route"] for r in resp.json().get("data", [])})
+        _routes_cache = sorted(routes)
+        print(f"[kmb-fetcher] Loaded {len(_routes_cache)} routes from API")
+    except Exception as e:
+        print(f"[kmb-fetcher] Failed to load routes: {e}, using empty list")
+        _routes_cache = []
+    return _routes_cache
 
 
 def fetch_route(route: str, r, fetched_at: str) -> tuple[int, int]:
@@ -63,15 +74,16 @@ def handle():
     published  = 0
     errors     = 0
 
+    routes = load_routes()
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-        futures = {pool.submit(fetch_route, route, r, fetched_at): route for route in ROUTES}
+        futures = {pool.submit(fetch_route, route, r, fetched_at): route for route in routes}
         for future in as_completed(futures):
             p, e = future.result()
             published += p
             errors    += e
 
-    return jsonify({"published": published, "routes": len(ROUTES), "errors": errors})
+    return jsonify({"published": published, "routes": len(routes), "errors": errors})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080, threaded=True)

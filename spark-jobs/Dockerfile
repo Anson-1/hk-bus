@@ -4,7 +4,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends default-jre-headless curl && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir pyspark==3.5.1
+RUN pip install --no-cache-dir pyspark==3.5.1 psycopg2-binary
 
 RUN mkdir -p /opt/spark-jobs
 
@@ -16,6 +16,6 @@ COPY kmb_analysis.py /opt/spark-jobs/kmb_analysis.py
 
 CMD ["spark-submit", \
      "--master", "local[*]", \
-     "--driver-memory", "2g", \
+     "--driver-memory", "4g", \
      "--jars", "/opt/spark-jobs/postgresql.jar", \
      "/opt/spark-jobs/kmb_analysis.py"]

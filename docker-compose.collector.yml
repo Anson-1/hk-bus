@@ -1,5 +1,17 @@
 services:
 
+  redis:
+    image: redis:7-alpine
+    container_name: hk-bus-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:15
     container_name: hk-bus-postgres
@@ -73,6 +85,60 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  kmb-fetcher:
+    build:
+      context: ./functions/kmb-fetcher
+    container_name: hk-bus-kmb-fetcher
+    environment:
+      REDIS_URL: redis://hk-bus-redis:6379
+      STREAM_KEY: kmb-eta-raw
+      CONCURRENCY: "8"
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+
+  delay-alerter:
+    build:
+      context: ./k8s/delay-alerter
+    container_name: hk-bus-delay-alerter
+    environment:
+      REDIS_URL: redis://hk-bus-redis:6379
+      DB_HOST: hk-bus-postgres
+      DB_PORT: "5432"
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      STREAM_KEY: kmb-eta-raw
+      THRESHOLD_MIN: "10"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3004:3004"
+    restart: unless-stopped
+
+  compute-analytics:
+    build:
+      context: ./functions/compute-analytics
+    container_name: hk-bus-compute-analytics
+    environment:
+      DB_HOST: hk-bus-postgres
+      DB_PORT: "5432"
+      DB_NAME: hkbus
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8080"
     restart: unless-stopped
 
 volumes:

@@ -1,0 +1,164 @@
+{
+  "title": "Spark Analytics (Batch)",
+  "uid": "spark-analytics",
+  "time": { "from": "now-7d", "to": "now" },
+  "refresh": "",
+  "schemaVersion": 36,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Routes Analysed",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(DISTINCT route) AS value FROM kmb.spark_route_reliability",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } } }
+    },
+    {
+      "id": 2,
+      "title": "Total ETA Samples",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(sample_count) AS value FROM kmb.spark_peak_hours",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" } }
+    },
+    {
+      "id": 3,
+      "title": "Overall Avg Wait (min)",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(avg_wait_minutes)::numeric, 1) AS value FROM kmb.spark_peak_hours",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" } } }
+    },
+    {
+      "id": 4,
+      "title": "Hours Covered",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(DISTINCT hour_of_day) AS value FROM kmb.spark_peak_hours",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } } }
+    },
+    {
+      "id": 5,
+      "title": "Avg & P95 Wait by Hour of Day (all KMB routes)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\" FROM kmb.spark_peak_hours ORDER BY hour_of_day",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "xField": "Hour",
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "none" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Avg Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] },
+          { "matcher": { "id": "byName", "options": "P95 Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "Most Reliable Routes (highest reliability score)",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT route AS \"Route\", ROUND(reliability_score::numeric, 3) AS \"Reliability\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait\", ROUND(stddev_wait_minutes::numeric, 1) AS \"Std Dev\", sample_count AS \"Samples\" FROM kmb.spark_route_reliability WHERE reliability_score > 0 ORDER BY reliability_score DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "sortBy": [] },
+      "fieldConfig": { "defaults": { "filterable": false } }
+    },
+    {
+      "id": 7,
+      "title": "Least Reliable Routes (most variable wait times)",
+      "type": "table",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT route AS \"Route\", ROUND(reliability_score::numeric, 3) AS \"Reliability\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait\", p95_wait_minutes AS \"P95 Wait\", ROUND(stddev_wait_minutes::numeric, 1) AS \"Std Dev\", sample_count AS \"Samples\" FROM kmb.spark_route_reliability WHERE sample_count >= 1000 ORDER BY reliability_score ASC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "sortBy": [] },
+      "fieldConfig": { "defaults": { "filterable": false } }
+    },
+    {
+      "id": 8,
+      "title": "Worst Route-Hour Combinations (longest avg wait)",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 20, "w": 14, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT route AS \"Route\", hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\", sample_count AS \"Samples\" FROM kmb.spark_analytics WHERE sample_count >= 50 ORDER BY avg_wait_minutes DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "sortBy": [] },
+      "fieldConfig": { "defaults": { "filterable": false } }
+    },
+    {
+      "id": 9,
+      "title": "Best Route-Hour Combinations (shortest avg wait)",
+      "type": "table",
+      "gridPos": { "x": 14, "y": 20, "w": 10, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT route AS \"Route\", hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\", sample_count AS \"Samples\" FROM kmb.spark_analytics WHERE sample_count >= 200 ORDER BY avg_wait_minutes ASC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": { "sortBy": [] },
+      "fieldConfig": { "defaults": { "filterable": false } }
+    }
+  ]
+}

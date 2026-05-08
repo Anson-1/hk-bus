@@ -25,8 +25,8 @@ spec:
     spec:
       containers:
       - name: kmb-fetcher
-        image: docker.io/library/hk-bus-kmb-fetcher:local
-        imagePullPolicy: Never
+        image: ansonhui123/kmb-fetcher:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:
@@ -85,8 +85,8 @@ spec:
     spec:
       containers:
       - name: compute-analytics
-        image: docker.io/library/hk-bus-compute-analytics:local
-        imagePullPolicy: Never
+        image: ansonhui123/compute-analytics:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:
@@ -149,6 +149,7 @@ spec:
           containers:
           - name: invoke
             image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
             command:
             - sh
             - -c
@@ -175,6 +176,7 @@ spec:
           containers:
           - name: invoke
             image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
             command:
             - sh
             - -c
@@ -204,8 +206,8 @@ spec:
     spec:
       containers:
       - name: delay-alerter
-        image: docker.io/library/hk-bus-delay-alerter:local
-        imagePullPolicy: Never
+        image: ansonhui123/delay-alerter:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3004
         env:
@@ -279,8 +281,8 @@ spec:
       serviceAccountName: spark-analytics-sa
       containers:
       - name: spark-analytics
-        image: docker.io/library/hk-bus-spark-analytics:local
-        imagePullPolicy: Never
+        image: ansonhui123/spark-analytics:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         resources:
@@ -329,6 +331,7 @@ spec:
           containers:
           - name: invoke
             image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
             command:
             - sh
             - -c

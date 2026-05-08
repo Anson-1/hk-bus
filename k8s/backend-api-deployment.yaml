@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: hk-bus-api
-          image: docker.io/library/hk-bus-web-app:local
-          imagePullPolicy: Never
+          image: ansonhui123/hk-bus-web-app:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:
@@ -43,14 +43,16 @@ spec:
             httpGet:
               path: /api/health
               port: 3000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 10
           readinessProbe:
             httpGet:
               path: /api/health
               port: 3000
-            initialDelaySeconds: 5
+            initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 10
           resources:
             requests:
               memory: "128Mi"

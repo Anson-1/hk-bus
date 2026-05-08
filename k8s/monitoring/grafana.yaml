@@ -145,7 +145,8 @@ data:
             "datasource": { "type": "postgres", "uid": "postgres" },
             "definition": "SELECT DISTINCT line FROM mtr.eta ORDER BY line",
             "query": "SELECT DISTINCT line FROM mtr.eta ORDER BY line",
-            "refresh": 2, "sort": 1, "multi": false, "includeAll": true, "current": {}
+            "refresh": 2, "sort": 1, "multi": false, "includeAll": true, "allValue": "All",
+            "current": { "selected": true, "text": "All", "value": "All" }
           }
         ]
       },
@@ -203,7 +204,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' AND ($line = 'All' OR line = '$line') GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
+            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND (fetched_at AT TIME ZONE 'Asia/Hong_Kong') > NOW() - INTERVAL '3 hours' AND ('$line' = 'All' OR line = '$line') GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
@@ -212,7 +213,7 @@ data:
           "id": 8, "title": "Avg Wait by Hour of Day — per Line",
           "type": "table", "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT line AS \"Line\", station AS \"Station\", dir AS \"Dir\", hour_of_day AS \"Hour\", avg_wait_min AS \"Avg Wait\", p95_wait_min AS \"P95 Wait\", sample_count AS \"Samples\" FROM mtr.v_station_hourly WHERE ($line = 'All' OR line = '$line') ORDER BY line, station, dir, hour_of_day", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT line AS \"Line\", station AS \"Station\", dir AS \"Dir\", hour_of_day AS \"Hour\", avg_wait_min AS \"Avg Wait\", p95_wait_min AS \"P95 Wait\", sample_count AS \"Samples\" FROM mtr.v_station_hourly WHERE ('$line' = 'All' OR line = '$line') ORDER BY line, station, dir, hour_of_day", "format": "table", "refId": "A" }],
           "options": { "sortBy": [{ "displayName": "Avg Wait", "desc": true }] },
           "fieldConfig": { "defaults": { "custom": { "align": "left", "displayMode": "auto" } } }
         }
@@ -299,6 +300,97 @@ data:
       ]
     }
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-spark
+  namespace: hk-bus
+data:
+  spark-analytics.json: |
+    {
+      "title": "Spark Analytics (Batch)",
+      "uid": "spark-analytics",
+      "time": { "from": "now-7d", "to": "now" },
+      "refresh": "",
+      "schemaVersion": 36,
+      "panels": [
+        {
+          "id": 1, "title": "Total Routes Analysed",
+          "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT COUNT(DISTINCT route) AS value FROM kmb.spark_route_reliability", "format": "table", "refId": "A" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } } }
+        },
+        {
+          "id": 2, "title": "Total ETA Samples",
+          "type": "stat", "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT SUM(sample_count) AS value FROM kmb.spark_peak_hours", "format": "table", "refId": "A" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" } }
+        },
+        {
+          "id": 3, "title": "Overall Avg Wait (min)",
+          "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT ROUND(AVG(avg_wait_minutes)::numeric, 1) AS value FROM kmb.spark_peak_hours", "format": "table", "refId": "A" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" } } }
+        },
+        {
+          "id": 4, "title": "Hours Covered",
+          "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT COUNT(DISTINCT hour_of_day) AS value FROM kmb.spark_peak_hours", "format": "table", "refId": "A" }],
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } } }
+        },
+        {
+          "id": 5, "title": "Avg & P95 Wait by Hour of Day (all KMB routes)",
+          "type": "barchart", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\" FROM kmb.spark_peak_hours ORDER BY hour_of_day", "format": "table", "refId": "A" }],
+          "options": { "xField": "Hour", "barWidth": 0.6, "groupWidth": 0.7, "legend": { "displayMode": "list", "placement": "bottom" } },
+          "fieldConfig": {
+            "defaults": { "unit": "none" },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "Avg Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] },
+              { "matcher": { "id": "byName", "options": "P95 Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+            ]
+          }
+        },
+        {
+          "id": 6, "title": "Most Reliable Routes (highest reliability score)",
+          "type": "table", "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT route AS \"Route\", ROUND(reliability_score::numeric, 3) AS \"Reliability\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait\", ROUND(stddev_wait_minutes::numeric, 1) AS \"Std Dev\", sample_count AS \"Samples\" FROM kmb.spark_route_reliability WHERE reliability_score > 0 ORDER BY reliability_score DESC LIMIT 20", "format": "table", "refId": "A" }],
+          "options": { "sortBy": [] }, "fieldConfig": { "defaults": { "filterable": false } }
+        },
+        {
+          "id": 7, "title": "Least Reliable Routes (most variable wait times)",
+          "type": "table", "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT route AS \"Route\", ROUND(reliability_score::numeric, 3) AS \"Reliability\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait\", p95_wait_minutes AS \"P95 Wait\", ROUND(stddev_wait_minutes::numeric, 1) AS \"Std Dev\", sample_count AS \"Samples\" FROM kmb.spark_route_reliability WHERE sample_count >= 1000 ORDER BY reliability_score ASC LIMIT 20", "format": "table", "refId": "A" }],
+          "options": { "sortBy": [] }, "fieldConfig": { "defaults": { "filterable": false } }
+        },
+        {
+          "id": 8, "title": "Worst Route-Hour Combinations (longest avg wait)",
+          "type": "table", "gridPos": { "x": 0, "y": 20, "w": 14, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT route AS \"Route\", hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\", sample_count AS \"Samples\" FROM kmb.spark_analytics WHERE sample_count >= 50 ORDER BY avg_wait_minutes DESC LIMIT 20", "format": "table", "refId": "A" }],
+          "options": { "sortBy": [] }, "fieldConfig": { "defaults": { "filterable": false } }
+        },
+        {
+          "id": 9, "title": "Best Route-Hour Combinations (shortest avg wait)",
+          "type": "table", "gridPos": { "x": 14, "y": 20, "w": 10, "h": 8 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT route AS \"Route\", hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\", sample_count AS \"Samples\" FROM kmb.spark_analytics WHERE sample_count >= 200 ORDER BY avg_wait_minutes ASC LIMIT 20", "format": "table", "refId": "A" }],
+          "options": { "sortBy": [] }, "fieldConfig": { "defaults": { "filterable": false } }
+        }
+      ]
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -340,6 +432,9 @@ spec:
         - name: dashboard-system
           mountPath: /var/lib/grafana/dashboards/system-health.json
           subPath: system-health.json
+        - name: dashboard-spark
+          mountPath: /var/lib/grafana/dashboards/spark-analytics.json
+          subPath: spark-analytics.json
         resources:
           requests:
             memory: "128Mi"
@@ -351,8 +446,9 @@ spec:
           httpGet:
             path: /api/health
             port: 3000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 120
           periodSeconds: 30
+          timeoutSeconds: 10
       volumes:
       - name: datasources
         configMap:
@@ -369,6 +465,9 @@ spec:
       - name: dashboard-system
         configMap:
           name: grafana-dashboard-system
+      - name: dashboard-spark
+        configMap:
+          name: grafana-dashboard-spark
 ---
 apiVersion: v1
 kind: Service

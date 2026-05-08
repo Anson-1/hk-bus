@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
       - name: eta-fetcher
-        image: docker.io/library/hk-bus-eta-fetcher:local
-        imagePullPolicy: Never
+        image: ansonhui123/hk-bus-eta-fetcher:latest
+        imagePullPolicy: IfNotPresent
         resources:
           requests:
             memory: "128Mi"
@@ -60,7 +60,6 @@ spec:
           timeoutSeconds: 3
           failureThreshold: 3
       restartPolicy: Always
-
 ---
 apiVersion: v1
 kind: Service

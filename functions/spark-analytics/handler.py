@@ -11,7 +11,7 @@ from kubernetes import client, config
 
 app = Flask(__name__)
 
-SPARK_IMAGE     = "hk-bus-spark:local"
+SPARK_IMAGE     = "ansonhui123/hk-bus-spark:latest"
 JOB_NAMESPACE   = "hk-bus"
 JOB_TTL_SECONDS = 3600   # auto-clean completed jobs after 1h
 
@@ -34,7 +34,7 @@ def build_job(job_name: str) -> client.V1Job:
                         client.V1Container(
                             name="spark-analysis",
                             image=SPARK_IMAGE,
-                            image_pull_policy="Never",
+                            image_pull_policy="Always",
                             command=[
                                 "spark-submit",
                                 "--master",        "local[*]",
