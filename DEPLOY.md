@@ -102,7 +102,25 @@ redis-xxx                    1/1     Running   0          60s
 
 ### 5. Deploy OpenFaaS functions and CronJobs
 
-The functions run in a separate namespace `openfaas-fn`. First copy the database secret there:
+`compute-analytics` and `spark-analytics` are deployed as real OpenFaaS `Function` CRDs — the OpenFaaS gateway manages their lifecycle and scales them to zero when idle.
+
+Install OpenFaaS first:
+
+```bash
+# Install arkade (OpenFaaS installer)
+curl -SLs https://get.arkade.dev | sh
+
+# Install OpenFaaS onto the cluster
+arkade install openfaas
+
+# Wait for gateway to be ready (~60s)
+kubectl rollout status -n openfaas deploy/gateway
+
+# Enable scale-to-zero (Community Edition)
+kubectl -n openfaas set env deploy/gateway scale_zero=true
+```
+
+The functions run in a separate namespace `openfaas-fn`. Copy the database secret there:
 
 ```bash
 kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
@@ -124,7 +142,7 @@ kubectl apply -f k8s/openfaas/functions-deployment.yaml
 This deploys:
 - **kmb-fetcher** — fetches KMB ETA every minute → publishes to Redis Stream
 - **compute-analytics** — computes avg/P95 wait times from `kmb.eta` every hour
-- **spark-analytics** — triggers the PySpark batch job every Sunday 2 AM HKT
+- **spark-analytics** — triggers the PySpark batch job every day 2 AM HKT
 - **delay-alerter** — Redis Stream consumer → writes delay events to PostgreSQL
 
 ### 6. Load sample data into PostgreSQL
@@ -186,32 +204,31 @@ Expected:
 kind does not have a load balancer, so use `kubectl port-forward`:
 
 ```bash
-# Web app — http://localhost:3000
-kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000
-
-# Grafana — http://localhost:3001  (admin / hkbus123)
-kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000
-```
-
-Open two separate terminals (one per port-forward), or run them as background processes:
-
-```bash
 kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000 &
 kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000 &
+kubectl port-forward -n openfaas svc/gateway 8888:8080 &
 ```
+
+| Service | URL | Credentials |
+|---|---|---|
+| Web app | http://localhost:3000 | — |
+| Grafana | http://localhost:3001 | admin / hkbus123 |
+| OpenFaaS UI | http://localhost:8888/ui/ | — (auth disabled) |
 
 ### 8. Verify the pipeline is live
 
+> **Note:** If your machine has an HTTP proxy configured, add `--noproxy localhost` to all curl commands below.
+
 ```bash
 # API health
-curl http://localhost:3000/api/health
+curl --noproxy localhost http://localhost:3000/api/health
 # → {"status":"ok","timestamp":"..."}
 
 # MTR ETA (live data from K8s postgres)
-curl "http://localhost:3000/api/mtr-eta?line=TCL&station=HOK"
+curl --noproxy localhost "http://localhost:3000/api/mtr-eta?line=TCL&station=HOK"
 
 # Recent delay alerts written by delay-alerter
-curl http://localhost:3000/api/alerts/recent
+curl --noproxy localhost http://localhost:3000/api/alerts/recent
 
 # Redis Stream — kmb-fetcher publishes here every minute
 kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
@@ -219,6 +236,14 @@ kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
 # Delay alerts table
 kubectl exec -n hk-bus postgres-0 -- \
   psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM public.delay_alerts;"
+
+# Invoke compute-analytics manually via OpenFaaS gateway
+curl --noproxy localhost -X POST http://localhost:8888/function/compute-analytics \
+  -H "Content-Type: application/json" -d '{}'
+# → {"ok":true,"rowsAffected":...,"elapsedMs":...}
+
+# List all deployed OpenFaaS functions
+curl --noproxy localhost http://localhost:8888/system/functions | python3 -m json.tool
 ```
 
 ---
@@ -279,6 +304,15 @@ k get pods -n hk-bus -w
 
 ### 4. Deploy OpenFaaS functions
 
+Install OpenFaaS and enable scale-to-zero:
+
+```bash
+curl -SLs https://get.arkade.dev | sh
+arkade install openfaas
+kubectl rollout status -n openfaas deploy/gateway
+kubectl -n openfaas set env deploy/gateway scale_zero=true
+```
+
 ```bash
 k create namespace openfaas-fn --dry-run=client -o yaml | k apply -f -
 
@@ -293,11 +327,12 @@ k apply -f k8s/openfaas/functions-deployment.yaml
 
 ### 5. Access
 
-| Service | URL |
-|---|---|
-| Web app | `http://<SERVER_IP>/` |
-| API health | `http://<SERVER_IP>/api/health` |
-| Grafana | `http://<SERVER_IP>:30400` — login: `admin` / `hkbus123` |
+| Service | URL | Credentials |
+|---|---|---|
+| Web app | `http://<SERVER_IP>/` | — |
+| API health | `http://<SERVER_IP>/api/health` | — |
+| Grafana | `http://<SERVER_IP>:30400` | admin / hkbus123 |
+| OpenFaaS UI | `http://<SERVER_IP>:31112/ui/` | — (auth disabled) |
 
 Get your server's public IP:
 ```bash

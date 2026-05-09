@@ -18,7 +18,7 @@ This project covers two areas:
 
 | AWS Service | Open-Source Replacement | Role |
 |---|---|---|
-| **AWS Lambda** | **OpenFaaS** (K8s Deployment) | `kmb-fetcher`, `compute-analytics`, `spark-analytics` functions |
+| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `compute-analytics`, `spark-analytics` — scale-to-zero functions |
 | **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream between fetcher and alerter |
 | **CloudWatch Events** | **Kubernetes CronJob** | Triggers functions on schedule |
 | **RDS (PostgreSQL)** | **PostgreSQL 15** StatefulSet | All ETA records, analytics, alerts |
@@ -26,7 +26,7 @@ This project covers two areas:
 | **API Gateway** | **Traefik** (k3s built-in) | Routes `/api/*` and frontend traffic |
 | **ECS / Fargate** | **Kubernetes** (kind / k3s) | Orchestrates all services |
 | **CloudWatch Dashboards** | **Grafana** | 4 dashboards — KMB, MTR, System Health, Spark Analytics |
-| **EMR / Glue (Spark)** | **PySpark in a K8s Job** | Batch analytics triggered weekly by OpenFaaS function |
+| **EMR / Glue (Spark)** | **PySpark in a K8s Job** | Batch analytics triggered daily by OpenFaaS function |
 
 ---
 
@@ -57,7 +57,7 @@ This project covers two areas:
       ▼
  PostgreSQL: kmb.analytics
 
- OpenFaaS: spark-analytics      (CronJob — every Sunday 2 AM HKT)
+ OpenFaaS: spark-analytics      (CronJob — every day 2 AM HKT)
       │  submits K8s Job
       ▼
  PySpark Job (local[*])
@@ -127,28 +127,34 @@ docker pull ansonhui123/hk-bus-web-app:latest
 kind load docker-image ansonhui123/hk-bus-web-app:latest --name hk-bus
 # ...
 
-# 3. Deploy
+# 3. Deploy core infrastructure
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/postgres/secret.yaml
 kubectl apply -f k8s/postgres/postgres.yaml
 kubectl apply -f k8s/redis.yaml
 kubectl apply -f k8s/backend-api-deployment.yaml
 kubectl apply -f k8s/monitoring/grafana.yaml
-kubectl apply -f k8s/spark/rbac.yaml
-kubectl apply -f k8s/openfaas/functions-deployment.yaml
 
-# 4. Copy secret to openfaas-fn namespace
+# 4. Install OpenFaaS and deploy functions
+arkade install openfaas
+kubectl rollout status -n openfaas deploy/gateway
+kubectl -n openfaas set env deploy/gateway scale_zero=true
+
 kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
 PG_PASS=$(kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
 kubectl create secret generic postgres-secret -n openfaas-fn --from-literal=password=${PG_PASS} --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f k8s/spark/rbac.yaml
+kubectl apply -f k8s/openfaas/functions-deployment.yaml
 
 # 5. Port-forward
 kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000 &
 kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000 &
+kubectl port-forward -n openfaas svc/gateway 8888:8080 &
 ```
 
 Web app: http://localhost:3000  
-Grafana: http://localhost:3001 (admin / hkbus123)
+Grafana: http://localhost:3001 (admin / hkbus123)  
+OpenFaaS UI: http://localhost:8888/ui/
 
 ---
 
@@ -173,8 +179,8 @@ hk-bus/
 │   ├── monitoring/
 │   │   └── grafana.yaml                   # Grafana Deployment + 4 dashboard ConfigMaps
 │   └── openfaas/
-│       └── functions-deployment.yaml      # kmb-fetcher, compute-analytics, spark-analytics,
-│                                          # delay-alerter Deployments + CronJobs
+│       └── functions-deployment.yaml      # kmb-fetcher (Deployment), compute-analytics +
+│                                          # spark-analytics (OpenFaaS Function CRDs), CronJobs
 ├── functions/
 │   ├── kmb-fetcher/                       # OpenFaaS fn: KMB API → Redis Stream (Python/Flask)
 │   ├── compute-analytics/                 # OpenFaaS fn: kmb.eta → kmb.analytics (Node/Express)

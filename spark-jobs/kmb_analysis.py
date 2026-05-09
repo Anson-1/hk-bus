@@ -36,7 +36,13 @@ spark.sparkContext.setLogLevel("WARN")
 print("[KMB Analysis] Reading kmb.eta from PostgreSQL...")
 
 # Push eta_seq=1 and wait_minutes filter to PostgreSQL to reduce transfer
-ETA_QUERY = "(SELECT * FROM kmb.eta WHERE eta_seq = 1 AND wait_minutes >= 0) AS eta_next"
+ETA_QUERY = (
+    "(SELECT * FROM kmb.eta "
+    " WHERE eta_seq = 1 AND wait_minutes >= 0"
+    " AND fetched_at >= '2025-05-08 00:00:00'"
+    " AND fetched_at <  '2025-05-09 00:00:00'"
+    ") AS eta_next"
+)
 
 df_clean = spark.read.jdbc(
     JDBC_URL, ETA_QUERY,
