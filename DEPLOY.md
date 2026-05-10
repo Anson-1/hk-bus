@@ -328,8 +328,8 @@ Install OpenFaaS and enable scale-to-zero:
 ```bash
 curl -SLs https://get.arkade.dev | sh
 arkade install openfaas
-kubectl rollout status -n openfaas deploy/gateway
-kubectl -n openfaas set env deploy/gateway scale_zero=true
+k rollout status -n openfaas deploy/gateway
+k -n openfaas set env deploy/gateway scale_zero=true
 ```
 
 ```bash

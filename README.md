@@ -4,13 +4,77 @@ A cloud-native transit tracking and analytics system for Hong Kong built as a **
 
 ---
 
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Quick Start (Local)](#quick-start-local)
+- [AWS → Open-Source Mapping](#aws--open-source-mapping)
+- [Architecture](#architecture)
+- [Spark Analytics](#spark-analytics)
+- [Grafana Dashboards](#grafana-dashboards)
+- [Web App Features](#web-app-features)
+- [Project Structure](#project-structure)
+- [Docker Images](#docker-images)
+- [Database Schema](#database-schema)
+- [Known Limitations](#known-limitations)
+
+---
+
 ## Project Overview
 
 This project covers two areas:
 
 1. **AWS → Open-Source Mapping on Kubernetes** — Every AWS component is replaced with a self-hosted equivalent deployable to any Kubernetes cluster (kind locally, k3s on EC2).
 
-2. **Spark Batch Analytics** — 14.6 million KMB ETA records self-collected from the HK government API are analysed with PySpark to find peak hours, per-route wait time distributions, and route reliability scores.
+2. **Spark Batch Analytics** — 84 million raw KMB ETA records self-collected from the HK government API are analysed with PySpark (filtering to `eta_seq=1` next-bus predictions) to find peak hours, per-route wait time distributions, and route reliability scores.
+
+---
+
+## Quick Start (Local)
+
+Full instructions are in **[DEPLOY.md](DEPLOY.md)**. Summary:
+
+```bash
+# 1. Create kind cluster
+kind create cluster --name hk-bus
+
+# 2. Pre-load images
+docker pull ansonhui123/hk-bus-web-app:latest
+# ... (see DEPLOY.md for full list)
+kind load docker-image ansonhui123/hk-bus-web-app:latest --name hk-bus
+# ...
+
+# 3. Deploy core infrastructure
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/postgres/secret.yaml
+kubectl apply -f k8s/postgres/postgres.yaml
+kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/eta-fetcher/deployment.yaml
+kubectl apply -f k8s/backend-api-deployment.yaml
+kubectl apply -f k8s/monitoring/grafana.yaml
+
+# 4. Install OpenFaaS and deploy functions
+arkade install openfaas
+kubectl rollout status -n openfaas deploy/gateway
+kubectl -n openfaas set env deploy/gateway scale_zero=true
+
+kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
+# Linux/Mac:
+PG_PASS=$(kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
+# Windows (PowerShell) — see DEPLOY.md Prerequisites for the full command
+kubectl create secret generic postgres-secret -n openfaas-fn --from-literal=password=${PG_PASS} --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f k8s/spark/rbac.yaml
+kubectl apply -f k8s/openfaas/functions-deployment.yaml
+
+# 5. Port-forward
+kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000 &
+kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000 &
+kubectl port-forward -n openfaas svc/gateway 8888:8080 &
+```
+
+Web app: http://localhost:3000  
+Grafana: http://localhost:3001 (admin / hkbus123)  
+OpenFaaS UI: http://localhost:8888/ui/
 
 ---
 
@@ -18,7 +82,7 @@ This project covers two areas:
 
 | AWS Service | Open-Source Replacement | Role |
 |---|---|---|
-| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `compute-analytics`, `spark-analytics` — scale-to-zero functions |
+| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `compute-analytics`, `spark-analytics` — always-on Deployments with OpenFaaS gateway routing (scale-to-zero requires Pro) |
 | **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream between fetcher and alerter |
 | **CloudWatch Events** | **Kubernetes CronJob** | Triggers functions on schedule |
 | **RDS (PostgreSQL)** | **PostgreSQL 15** StatefulSet | All ETA records, analytics, alerts |
@@ -97,9 +161,9 @@ This project covers two areas:
 
 ---
 
-## Spark Analytics (Part 2)
+## Spark Analytics
 
-The PySpark job runs on 14.6 million KMB bus ETA records self-collected from the government API. It produces three result tables:
+The PySpark job runs on 84 million raw KMB ETA records self-collected from the government API, filtering to `eta_seq=1` (next-bus predictions only). It produces three result tables:
 
 | Table | Rows | What it computes |
 |---|---|---|
@@ -137,51 +201,6 @@ Login at `http://localhost:3001` (local) or `http://<SERVER_IP>:30400` (EC2) —
 
 - **Bus tab** — Search any KMB route, see real-time ETA at every stop
 - **MTR tab** — Select any MTR line and station, see live train arrivals for both directions (auto-refreshes every 30 s)
-
----
-
-## Quick Start (Local)
-
-Full instructions are in **[DEPLOY.md](DEPLOY.md)**. Summary:
-
-```bash
-# 1. Create kind cluster
-kind create cluster --name hk-bus
-
-# 2. Pre-load images
-docker pull ansonhui123/hk-bus-web-app:latest
-# ... (see DEPLOY.md for full list)
-kind load docker-image ansonhui123/hk-bus-web-app:latest --name hk-bus
-# ...
-
-# 3. Deploy core infrastructure
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/postgres/secret.yaml
-kubectl apply -f k8s/postgres/postgres.yaml
-kubectl apply -f k8s/redis.yaml
-kubectl apply -f k8s/backend-api-deployment.yaml
-kubectl apply -f k8s/monitoring/grafana.yaml
-
-# 4. Install OpenFaaS and deploy functions
-arkade install openfaas
-kubectl rollout status -n openfaas deploy/gateway
-kubectl -n openfaas set env deploy/gateway scale_zero=true
-
-kubectl create namespace openfaas-fn --dry-run=client -o yaml | kubectl apply -f -
-PG_PASS=$(kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | base64 -d)
-kubectl create secret generic postgres-secret -n openfaas-fn --from-literal=password=${PG_PASS} --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f k8s/spark/rbac.yaml
-kubectl apply -f k8s/openfaas/functions-deployment.yaml
-
-# 5. Port-forward
-kubectl port-forward -n hk-bus svc/hk-bus-api 3000:3000 &
-kubectl port-forward -n hk-bus svc/grafana-monitoring 3001:3000 &
-kubectl port-forward -n openfaas svc/gateway 8888:8080 &
-```
-
-Web app: http://localhost:3000  
-Grafana: http://localhost:3001 (admin / hkbus123)  
-OpenFaaS UI: http://localhost:8888/ui/
 
 ---
 
@@ -224,7 +243,7 @@ hk-bus/
 │   └── passenger-fetcher/                 # OpenFaaS fn: IMMD passenger CSV → passenger_daily_summary (Python)
 ├── spark-jobs/
 │   ├── Dockerfile                         # PySpark + PostgreSQL JDBC driver
-│   └── kmb_analysis.py                    # PySpark job: 14.6M ETA records → 3 result tables
+│   └── kmb_analysis.py                    # PySpark job: 84M raw ETA records (eta_seq=1) → 3 result tables
 ├── web-app/
 │   ├── Dockerfile                         # Multi-stage: Vite build + Express serve
 │   ├── backend/
@@ -266,7 +285,7 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | `ansonhui123/kmb-fetcher` | OpenFaaS function — KMB API → Redis Stream |
 | `ansonhui123/compute-analytics` | OpenFaaS function — kmb.eta → kmb.analytics |
 | `ansonhui123/spark-analytics` | OpenFaaS function — submits Spark K8s Job |
-| `ansonhui123/hk-bus-spark` | PySpark job runner (14.6M record analysis) |
+| `ansonhui123/hk-bus-spark` | PySpark job runner (84M raw ETA records, eta_seq=1 analysis) |
 | `ansonhui123/delay-alerter` | Redis Stream consumer → delay_alerts |
 | `heiheivan/traffic-fetcher` | OpenFaaS function — Smart Lamppost XML → traffic_speed_volume (every 2 min) |
 | `heiheivan/accident-fetcher` | OpenFaaS function — TD accident CSVs → accident_summary (daily) |
@@ -297,9 +316,9 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 
 | Limitation | Detail |
 |---|---|
-| **OpenFaaS scale-to-zero requires Pro** | The community edition does not support the `openfaas.com/v1` `Function` CRD operator. Functions are deployed as standard Kubernetes Deployments with the `faas_function` label instead — they are always-on rather than truly scale-to-zero. |
-| **KMB route coverage** | Both `kmb-fetcher` (OpenFaaS) and `eta-fetcher` dynamically load all routes from the KMB `/route` API on startup, covering the full KMB network. |
+| **OpenFaaS scale-to-zero requires Pro** | Functions are deployed as always-on Kubernetes Deployments with OpenFaaS gateway routing, as scale-to-zero requires the commercial OpenFaaS Pro edition. |
 | **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. HPA is configured for `hk-bus-api` only. |
 | **No HTTPS** | TLS termination is not configured in `ingress.yaml`. Suitable for local kind / internal EC2 testing only. |
 | **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
 | **Data scope** | The 14.6 M record dataset used for Spark analytics was collected via a long-running EC2 collector, not the bundled kind cluster. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
+
