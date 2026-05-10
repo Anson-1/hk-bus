@@ -7,3 +7,5 @@ venv/
 *.log
 stops.json
 .claude/
+node_modules/
+.env

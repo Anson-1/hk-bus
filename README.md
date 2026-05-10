@@ -229,3 +229,16 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | `spark_route_reliability` | `kmb` | Per-route reliability score (1 - stddev/(avg+1)) |
 | `eta` | `mtr` | Raw MTR ETA records — line, station, direction, wait_minutes |
 | `delay_alerts` | `public` | Delay events written by delay-alerter Redis Stream consumer |
+
+---
+
+## Known Limitations
+
+| Limitation | Detail |
+|---|---|
+| **OpenFaaS scale-to-zero requires Pro** | The community edition does not support the `openfaas.com/v1` `Function` CRD operator. Functions are deployed as standard Kubernetes Deployments with the `faas_function` label instead — they are always-on rather than truly scale-to-zero. |
+| **KMB route coverage** | Both `kmb-fetcher` (OpenFaaS) and `eta-fetcher` dynamically load all routes from the KMB `/route` API on startup, covering the full KMB network. |
+| **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. HPA is configured for `hk-bus-api` only. |
+| **No HTTPS** | TLS termination is not configured in `ingress.yaml`. Suitable for local kind / internal EC2 testing only. |
+| **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
+| **Data scope** | The 14.6 M record dataset used for Spark analytics was collected via a long-running EC2 collector, not the bundled kind cluster. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |

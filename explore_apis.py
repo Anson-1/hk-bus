@@ -1,5 +1,22 @@
 """
-HK Transit API Explorer
+HK Transit API Explorer — Supplementary Data Analysis (Component 2)
+
+This script was used to explore and characterise the four HK public transport
+APIs before building the main pipeline. It is a standalone analysis tool,
+not part of the deployed system.
+
+Purpose:
+  - Discover API structure, field names, and data formats for KMB, CTB, GMB, MTR
+  - Sample live ETA data to understand wait time distributions and delay patterns
+  - Inform schema design (eta_records fields, delay remark strings, GMB headways)
+  - Provide supplementary analysis using Pandas alongside the PySpark batch job
+
+Key findings used in the project:
+  - KMB delay signals: rmk_en in {"Delayed journey", "Moving slowly"}
+  - GMB provides relative diff (minutes) rather than absolute ETA timestamps
+  - MTR is_delay field ('Y'/'N') maps directly to the delay-alerter threshold logic
+  - KMB route-eta bulk endpoint avoids 34x per-stop API calls per route
+
 Run: python explore_apis.py
 Requires: pip install requests
 """

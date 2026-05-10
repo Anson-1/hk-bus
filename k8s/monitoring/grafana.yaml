@@ -49,7 +49,8 @@ data:
       "uid": "kmb-delay-overview",
       "timezone": "browser",
       "refresh": "30s",
-      "time": { "from": "now-3h", "to": "now" },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": { "time_options": ["5m", "15m", "30m", "1h"], "refresh_intervals": ["10s", "30s", "1m"] },
       "templating": { "list": [] },
       "panels": [
         {
@@ -89,7 +90,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT (DATE_TRUNC('hour', fetched_at) + FLOOR(EXTRACT(MINUTE FROM fetched_at)/5)*INTERVAL '5 minutes') AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS \"Delay %\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY 1 ORDER BY 1",
+            "rawSql": "SELECT (DATE_TRUNC('hour', fetched_at) + FLOOR(EXTRACT(MINUTE FROM fetched_at)/5)*INTERVAL '5 minutes') AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS \"Delay %\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > (NOW() AT TIME ZONE 'Asia/Hong_Kong') - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
@@ -185,23 +186,23 @@ data:
         },
         {
           "id": 5, "title": "Avg Wait by Line (all data)",
-          "type": "bargauge", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+          "type": "bargauge", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 10 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT line AS \"Line\", ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND wait_minutes IS NOT NULL GROUP BY line ORDER BY line", "format": "table", "refId": "A" }],
-          "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "displayMode": "gradient" },
+          "targets": [{ "rawSql": "SELECT line AS \"Line\", ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND wait_minutes IS NOT NULL AND wait_minutes <= 90 GROUP BY line ORDER BY line", "format": "table", "refId": "A" }],
+          "options": { "orientation": "horizontal", "reduceOptions": { "values": true, "calcs": [], "fields": "/^Avg Wait/" }, "displayMode": "gradient" },
           "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 4 }, { "color": "red", "value": 8 } ] }, "color": { "mode": "thresholds" } } }
         },
         {
           "id": 6, "title": "P95 Wait by Line (all data)",
-          "type": "bargauge", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+          "type": "bargauge", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 10 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT line AS \"Line\", ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS \"P95 Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND wait_minutes IS NOT NULL GROUP BY line ORDER BY line", "format": "table", "refId": "A" }],
-          "options": { "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "displayMode": "gradient" },
+          "targets": [{ "rawSql": "SELECT line AS \"Line\", ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS \"P95 Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND wait_minutes IS NOT NULL AND wait_minutes <= 90 GROUP BY line ORDER BY line", "format": "table", "refId": "A" }],
+          "options": { "orientation": "horizontal", "reduceOptions": { "values": true, "calcs": [], "fields": "/^P95 Wait/" }, "displayMode": "gradient" },
           "fieldConfig": { "defaults": { "unit": "none", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 6 }, { "color": "red", "value": 12 } ] }, "color": { "mode": "thresholds" } } }
         },
         {
           "id": 7, "title": "MTR Wait Over Time (all lines)",
-          "type": "timeseries", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+          "type": "timeseries", "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
             "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND (fetched_at AT TIME ZONE 'Asia/Hong_Kong') > NOW() - INTERVAL '3 hours' AND ('$line' = 'All' OR line = '$line') GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
@@ -211,11 +212,19 @@ data:
         },
         {
           "id": 8, "title": "Avg Wait by Hour of Day — per Line",
-          "type": "table", "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+          "type": "table", "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{ "rawSql": "SELECT line AS \"Line\", station AS \"Station\", dir AS \"Dir\", hour_of_day AS \"Hour\", avg_wait_min AS \"Avg Wait\", p95_wait_min AS \"P95 Wait\", sample_count AS \"Samples\" FROM mtr.v_station_hourly WHERE ('$line' = 'All' OR line = '$line') ORDER BY line, station, dir, hour_of_day", "format": "table", "refId": "A" }],
           "options": { "sortBy": [{ "displayName": "Avg Wait", "desc": true }] },
           "fieldConfig": { "defaults": { "custom": { "align": "left", "displayMode": "auto" } } }
+        },
+        {
+          "id": 11, "title": "MTR Line Reference",
+          "type": "table", "gridPos": { "x": 0, "y": 30, "w": 24, "h": 6 },
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "targets": [{ "rawSql": "SELECT code AS \"Code\", name AS \"Line Name\" FROM (VALUES ('AEL','Airport Express'),('DRL','Disneyland Resort Line'),('EAL','East Rail Line'),('ISL','Island Line'),('KTL','Kwun Tong Line'),('SIL','South Island Line'),('TCL','Tung Chung Line'),('TKL','Tseung Kwan O Line'),('TML','Tuen Ma Line'),('TWL','Tsuen Wan Line')) AS t(code,name) ORDER BY code", "format": "table", "refId": "A" }],
+          "options": { "sortBy": [] },
+          "fieldConfig": { "defaults": { "custom": { "align": "left", "displayMode": "auto", "width": 200 } } }
         }
       ]
     }
@@ -435,6 +444,15 @@ spec:
         - name: dashboard-spark
           mountPath: /var/lib/grafana/dashboards/spark-analytics.json
           subPath: spark-analytics.json
+        - name: dashboard-accident
+          mountPath: /var/lib/grafana/dashboards/accident-insights.json
+          subPath: accident-insights.json
+        - name: dashboard-passenger
+          mountPath: /var/lib/grafana/dashboards/passenger-flow.json
+          subPath: passenger-flow.json
+        - name: dashboard-traffic
+          mountPath: /var/lib/grafana/dashboards/traffic-insights.json
+          subPath: traffic-insights.json
         resources:
           requests:
             memory: "128Mi"
@@ -468,6 +486,112 @@ spec:
       - name: dashboard-spark
         configMap:
           name: grafana-dashboard-spark
+      - name: dashboard-accident
+        configMap:
+          name: grafana-dashboard-accident
+      - name: dashboard-passenger
+        configMap:
+          name: grafana-dashboard-passenger
+      - name: dashboard-traffic
+        configMap:
+          name: grafana-dashboard-traffic
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-accident
+  namespace: hk-bus
+data:
+  accident-insights.json: |
+    {
+      "title": "HK Traffic Accident Insights",
+      "uid": "hk-accident-insights",
+      "tags": ["accidents", "traffic"],
+      "timezone": "Asia/Hong_Kong",
+      "refresh": "",
+      "schemaVersion": 36,
+      "time": { "from": "2021-01-01T00:00:00.000Z", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "year", "label": "Year", "type": "query",
+            "datasource": "PostgreSQL",
+            "query": "SELECT DISTINCT year::text FROM accident_summary WHERE year IS NOT NULL ORDER BY year DESC",
+            "refresh": 1, "includeAll": false, "multi": false, "sort": 3,
+            "current": { "text": "2024", "value": "2024" }
+          }
+        ]
+      },
+      "panels": [
+        { "id": 1, "title": "Total Accidents ($year)", "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = $year AND district IS NOT NULL;", "format": "table", "refId": "A" }] },
+        { "id": 2, "title": "Fatal Accidents ($year)", "type": "stat", "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "dark-red" }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = $year AND district IS NOT NULL AND severity = 'Fatal';", "format": "table", "refId": "A" }] },
+        { "id": 3, "title": "Serious Injuries ($year)", "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = $year AND district IS NOT NULL AND severity = 'Serious';", "format": "table", "refId": "A" }] },
+        { "id": 4, "title": "Wet Road Accidents ($year)", "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT SUM(count) FROM accident_summary WHERE year = $year AND road_condition = 'Wet';", "format": "table", "refId": "A" }] },
+        { "id": 5, "title": "Top 10 Most Dangerous Districts ($year)", "type": "barchart", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.7 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 } } }, "targets": [{ "rawSql": "SELECT district, SUM(count) AS total_accidents FROM accident_summary WHERE year = $year AND district IS NOT NULL GROUP BY district ORDER BY total_accidents DESC LIMIT 10;", "format": "table", "refId": "A" }] },
+        { "id": 6, "title": "Road Condition Impact: Wet vs Dry ($year)", "type": "barchart", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "vertical", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" }, "barWidth": 0.6 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 } } }, "targets": [{ "rawSql": "SELECT road_condition, SUM(CASE WHEN severity = 'Fatal' THEN count ELSE 0 END) AS \"Fatal\", SUM(CASE WHEN severity = 'Serious' THEN count ELSE 0 END) AS \"Serious\", SUM(CASE WHEN severity = 'Slight' THEN count ELSE 0 END) AS \"Slight\" FROM accident_summary WHERE year = $year AND road_condition IS NOT NULL AND road_condition != 'Unknown' GROUP BY road_condition ORDER BY road_condition;", "format": "table", "refId": "A" }] },
+        { "id": 7, "title": "Accident Type Breakdown ($year)", "type": "piechart", "gridPos": { "x": 0, "y": 14, "w": 11, "h": 10 }, "datasource": "PostgreSQL", "options": { "pieType": "donut", "displayLabels": ["name", "percent"], "legend": { "displayMode": "table", "placement": "right", "values": ["percent", "value"] } }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }, "targets": [{ "rawSql": "SELECT SUM(CASE WHEN REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') = 'Vehicle/Vehicle' THEN count ELSE 0 END) AS \"Vehicle/Vehicle\", SUM(CASE WHEN REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') = 'Vehicle/None' THEN count ELSE 0 END) AS \"Vehicle/None\", SUM(CASE WHEN REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') = 'Vehicle/Pedestrian' THEN count ELSE 0 END) AS \"Vehicle/Pedestrian\", SUM(CASE WHEN REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') = 'Vehicle/Object' THEN count ELSE 0 END) AS \"Vehicle/Object\" FROM accident_summary WHERE year = $year AND accident_type IS NOT NULL;", "format": "table", "refId": "A" }] },
+        { "id": 8, "title": "Fatal Accidents Trend (by Collision Type)", "type": "timeseries", "gridPos": { "x": 11, "y": 14, "w": 13, "h": 10 }, "datasource": "PostgreSQL", "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }, "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 10 }, "color": { "mode": "palette-classic" } } }, "targets": [{ "rawSql": "SELECT make_date(year, 6, 15) AS time, REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') AS metric, SUM(count) AS value FROM accident_summary WHERE year IS NOT NULL AND severity = 'Fatal' AND accident_type IS NOT NULL GROUP BY year, REGEXP_REPLACE(accident_type, '\\s*/\\s*', '/') ORDER BY year;", "format": "time_series", "refId": "A" }] },
+        { "id": 9, "title": "All Accidents Trend (by Severity)", "type": "timeseries", "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 }, "datasource": "PostgreSQL", "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }, "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 20 }, "color": { "mode": "palette-classic" } } }, "targets": [{ "rawSql": "SELECT make_date(year, 6, 15) AS time, severity AS metric, SUM(count) AS value FROM accident_summary WHERE year IS NOT NULL AND accident_type IS NOT NULL AND severity != 'All' GROUP BY year, severity ORDER BY year;", "format": "time_series", "refId": "A" }] },
+        { "id": 10, "title": "Accidents by Hour of Day ($year)", "type": "barchart", "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 }, "datasource": "PostgreSQL", "options": { "orientation": "vertical", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.8 }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "semi-dark-orange" }, "custom": { "fillOpacity": 80 }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT LPAD(hour_of_day::text, 2, '0') || ':00' AS hour, SUM(count) AS accidents FROM accident_summary WHERE year = $year AND hour_of_day IS NOT NULL GROUP BY hour_of_day ORDER BY hour_of_day;", "format": "table", "refId": "A" }] },
+        { "id": 11, "title": "Avg Accidents per Day: Wet vs Dry Road ($year)", "type": "barchart", "gridPos": { "x": 0, "y": 40, "w": 24, "h": 8 }, "datasource": "PostgreSQL", "description": "Average number of accidents per day under each road surface condition. Dry days estimated at 235/year, wet road days at 130/year (HK Observatory average). Shows whether wet conditions lead to more accidents per day despite lower total volume.", "options": { "orientation": "vertical", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" }, "barWidth": 0.4, "groupWidth": 0.6 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "short", "decimals": 1 } }, "targets": [{ "rawSql": "SELECT t.road_condition, ROUND(SUM(CASE WHEN t.severity='Fatal' THEN t.total ELSE 0 END)::numeric / CASE WHEN t.road_condition='Wet' THEN w.wet_days ELSE w.dry_days END, 2) AS \"Fatal\", ROUND(SUM(CASE WHEN t.severity='Serious' THEN t.total ELSE 0 END)::numeric / CASE WHEN t.road_condition='Wet' THEN w.wet_days ELSE w.dry_days END, 2) AS \"Serious\", ROUND(SUM(CASE WHEN t.severity='Slight' THEN t.total ELSE 0 END)::numeric / CASE WHEN t.road_condition='Wet' THEN w.wet_days ELSE w.dry_days END, 2) AS \"Slight\" FROM (SELECT road_condition, severity, SUM(count) AS total FROM accident_summary WHERE year=$year AND road_condition IN ('Dry','Wet') AND severity IN ('Fatal','Serious','Slight') GROUP BY road_condition, severity) t JOIN weather_annual_stats w ON w.year=$year GROUP BY t.road_condition, w.wet_days, w.dry_days ORDER BY t.road_condition DESC;", "format": "table", "refId": "A" }] }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-passenger
+  namespace: hk-bus
+data:
+  passenger-flow.json: |
+    {
+      "title": "HK Cross-Border Passenger Flow",
+      "uid": "hk-passenger-flow",
+      "tags": ["passenger", "holidays", "cross-border"],
+      "timezone": "Asia/Hong_Kong",
+      "refresh": "1h",
+      "schemaVersion": 36,
+      "time": { "from": "2021-01-01T00:00:00.000Z", "to": "now" },
+      "panels": [
+        { "id": 1, "title": "Total Passengers Since 2021", "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 5, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "locale", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT SUM(total) FROM passenger_daily_summary WHERE direction = 'Arrival';", "format": "table", "refId": "A" }] },
+        { "id": 2, "title": "Avg Passengers on Public Holidays", "type": "stat", "gridPos": { "x": 5, "y": 0, "w": 5, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "locale", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT ROUND(AVG(total)) FROM passenger_daily_summary WHERE day_type = 'Public Holiday' AND total > 0;", "format": "table", "refId": "A" }] },
+        { "id": 3, "title": "Avg Passengers on Weekdays", "type": "stat", "gridPos": { "x": 10, "y": 0, "w": 5, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "locale", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT ROUND(AVG(total)) FROM passenger_daily_summary WHERE day_type = 'Weekday' AND total > 0;", "format": "table", "refId": "A" }] },
+        { "id": 4, "title": "Holiday Surge Multiplier vs Weekday", "type": "stat", "gridPos": { "x": 15, "y": 0, "w": 5, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "none", "decimals": 2 } }, "targets": [{ "rawSql": "SELECT ROUND(AVG(CASE WHEN day_type = 'Public Holiday' THEN total END)::numeric / NULLIF(AVG(CASE WHEN day_type = 'Weekday' THEN total END), 0), 2) FROM passenger_daily_summary WHERE total > 0;", "format": "table", "refId": "A" }] },
+        { "id": 5, "title": "Average Daily Passengers by Day Type", "type": "barchart", "gridPos": { "x": 0, "y": 4, "w": 10, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "vertical", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.6 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "locale" } }, "targets": [{ "rawSql": "SELECT day_type, ROUND(AVG(total)) AS avg_passengers FROM passenger_daily_summary WHERE total > 0 GROUP BY day_type ORDER BY avg_passengers DESC;", "format": "table", "refId": "A" }] },
+        { "id": 6, "title": "Top Control Points by Total Volume", "type": "barchart", "gridPos": { "x": 10, "y": 4, "w": 14, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.6 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT control_point, SUM(total) AS total_passengers FROM passenger_daily_summary WHERE total > 0 GROUP BY control_point ORDER BY total_passengers DESC LIMIT 10;", "format": "table", "refId": "A" }] },
+        { "id": 7, "title": "Monthly Passenger Trend — Top 4 Control Points", "type": "timeseries", "gridPos": { "x": 0, "y": 14, "w": 24, "h": 10 }, "datasource": "PostgreSQL", "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }, "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 8 }, "color": { "mode": "palette-classic" }, "unit": "locale" } }, "targets": [{ "rawSql": "SELECT DATE_TRUNC('month', date) AS time, control_point AS metric, SUM(total) AS value FROM passenger_daily_summary WHERE control_point IN ('Lo Wu', 'Lok Ma Chau Spur Line', 'Airport', 'Shenzhen Bay') AND direction = 'Arrival' GROUP BY DATE_TRUNC('month', date), control_point ORDER BY time;", "format": "time_series", "refId": "A" }] },
+        { "id": 8, "title": "Arrivals vs Departures — Monthly Total", "type": "timeseries", "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 }, "datasource": "PostgreSQL", "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }, "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 10 }, "color": { "mode": "palette-classic" }, "unit": "locale" } }, "targets": [{ "rawSql": "SELECT DATE_TRUNC('month', date) AS time, direction AS metric, SUM(total) AS value FROM passenger_daily_summary GROUP BY DATE_TRUNC('month', date), direction ORDER BY time;", "format": "time_series", "refId": "A" }] },
+        { "id": 9, "title": "Visitor Breakdown on Public Holidays", "type": "piechart", "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 }, "datasource": "PostgreSQL", "options": { "pieType": "donut", "legend": { "displayMode": "table", "placement": "right", "values": ["percent", "value"] } }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "locale" } }, "targets": [{ "rawSql": "SELECT SUM(hk_residents) AS \"HK Residents\", SUM(mainland_visitors) AS \"Mainland Visitors\", SUM(other_visitors) AS \"Other Visitors\" FROM passenger_daily_summary WHERE day_type = 'Public Holiday';", "format": "table", "refId": "A" }] }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-traffic
+  namespace: hk-bus
+data:
+  traffic-insights.json: |
+    {
+      "title": "HK Real-Time Traffic — Smart Lamppost Detectors",
+      "uid": "hk-traffic-slp",
+      "tags": ["traffic", "speed", "volume", "smart-lamppost"],
+      "timezone": "Asia/Hong_Kong",
+      "refresh": "2m",
+      "schemaVersion": 36,
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        { "id": 1, "title": "Active Detectors (latest batch)", "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "none", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT COUNT(DISTINCT detector_id) FROM traffic_speed_volume WHERE fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume);", "format": "table", "refId": "A" }] },
+        { "id": 2, "title": "Avg Speed — All Detectors (km/h)", "type": "stat", "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "orange", "value": 30 }, { "color": "green", "value": 60 }] }, "unit": "velocitykmh", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT ROUND(AVG(speed)) FROM traffic_speed_volume WHERE speed > 0 AND fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume);", "format": "table", "refId": "A" }] },
+        { "id": 3, "title": "Total Vehicles Counted (latest batch)", "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "locale", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT SUM(volume) FROM traffic_speed_volume WHERE fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume);", "format": "table", "refId": "A" }] },
+        { "id": 4, "title": "Congested Detectors (speed < 30 km/h)", "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 }, "datasource": "PostgreSQL", "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }, "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": 0 }, { "color": "orange", "value": 5 }, { "color": "red", "value": 15 }] }, "unit": "none", "decimals": 0 } }, "targets": [{ "rawSql": "SELECT COUNT(DISTINCT detector_id) FROM traffic_speed_volume WHERE speed > 0 AND speed < 30 AND fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume);", "format": "table", "refId": "A" }] },
+        { "id": 5, "title": "Average Speed Over Time (All Detectors)", "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 }, "datasource": "PostgreSQL", "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }, "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 10 }, "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "velocitykmh" } }, "targets": [{ "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AS time, ROUND(AVG(speed)) AS \"Avg Speed (km/h)\" FROM traffic_speed_volume WHERE speed > 0 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY time;", "format": "time_series", "refId": "A" }] },
+        { "id": 6, "title": "Average Speed by District (latest batch)", "type": "barchart", "gridPos": { "x": 0, "y": 12, "w": 14, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.6, "xTickLabelSpacing": 80 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "velocitykmh", "min": 0, "max": 80 } }, "targets": [{ "rawSql": "SELECT l.district, ROUND(AVG(t.speed)) AS avg_speed_kmh FROM traffic_speed_volume t JOIN traffic_detector_locations l ON t.detector_id = l.aid_id WHERE t.speed > 0 AND t.fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume) GROUP BY l.district ORDER BY avg_speed_kmh ASC LIMIT 15;", "format": "table", "refId": "A" }] },
+        { "id": 7, "title": "Vehicle Volume by District (latest batch)", "type": "barchart", "gridPos": { "x": 14, "y": 12, "w": 10, "h": 10 }, "datasource": "PostgreSQL", "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" }, "barWidth": 0.6 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "short" } }, "targets": [{ "rawSql": "SELECT l.district, SUM(t.volume) AS total_vehicles FROM traffic_speed_volume t JOIN traffic_detector_locations l ON t.detector_id = l.aid_id WHERE t.fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume) GROUP BY l.district ORDER BY total_vehicles DESC LIMIT 15;", "format": "table", "refId": "A" }] },
+        { "id": 8, "title": "Speed by Lane Type (latest batch)", "type": "barchart", "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 }, "datasource": "PostgreSQL", "options": { "orientation": "vertical", "legend": { "displayMode": "list", "placement": "bottom" }, "barWidth": 0.5 }, "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80 }, "unit": "velocitykmh" } }, "targets": [{ "rawSql": "SELECT lane_id, ROUND(AVG(speed)) AS avg_speed FROM traffic_speed_volume WHERE speed > 0 AND fetched_at >= (SELECT MAX(fetched_at) - INTERVAL '2 minutes' FROM traffic_speed_volume) GROUP BY lane_id ORDER BY avg_speed DESC;", "format": "table", "refId": "A" }] },
+        { "id": 9, "title": "Latest Readings — All Detectors", "type": "table", "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 }, "datasource": "PostgreSQL", "options": { "sortBy": [{ "displayName": "Speed (km/h)", "desc": false }] }, "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [{ "matcher": { "id": "byName", "options": "speed" }, "properties": [{ "id": "displayName", "value": "Speed (km/h)" }, { "id": "unit", "value": "velocitykmh" }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "orange", "value": 30 }, { "color": "green", "value": 60 }] } }, { "id": "custom.displayMode", "value": "color-background" }] }, { "matcher": { "id": "byName", "options": "volume" }, "properties": [{ "id": "displayName", "value": "Vehicles" }] }] }, "targets": [{ "rawSql": "SELECT DISTINCT ON (t.detector_id) l.district, l.road_en, t.detector_id, t.direction, t.lane_id, t.speed, t.volume, t.fetched_at FROM traffic_speed_volume t JOIN traffic_detector_locations l ON t.detector_id = l.aid_id WHERE t.speed > 0 ORDER BY t.detector_id, t.fetched_at DESC LIMIT 50;", "format": "table", "refId": "A" }] }
+      ]
+    }
 ---
 apiVersion: v1
 kind: Service

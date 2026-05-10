@@ -64,33 +64,71 @@ spec:
   type: ClusterIP
 ---
 # ── compute-analytics ────────────────────────────────────────────────────────
-# Real OpenFaaS Function CRD — gateway manages lifecycle and scale-to-zero.
-# Scales to 0 replicas after 5 min idle; gateway spins it back up on next
-# CronJob invocation. Equivalent to AWS Lambda triggered by CloudWatch Events.
-apiVersion: openfaas.com/v1
-kind: Function
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: compute-analytics
   namespace: openfaas-fn
-spec:
-  name: compute-analytics
-  image: ansonhui123/compute-analytics:latest
   labels:
-    com.openfaas.scale.zero: "true"
-    com.openfaas.scale.zero-duration: "5m"
-  environment:
-    DB_HOST: "postgres-db.hk-bus.svc.cluster.local"
-    DB_PORT: "5432"
-    DB_NAME: "hkbus"
-    DB_USER: "postgres"
-  secrets:
-    - postgres-secret
-  requests:
-    memory: "64Mi"
-    cpu: "50m"
-  limits:
-    memory: "128Mi"
-    cpu: "200m"
+    faas_function: compute-analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: compute-analytics
+  template:
+    metadata:
+      labels:
+        faas_function: compute-analytics
+    spec:
+      containers:
+      - name: compute-analytics
+        image: ansonhui123/compute-analytics:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute-analytics
+  namespace: openfaas-fn
+  labels:
+    faas_function: compute-analytics
+spec:
+  selector:
+    faas_function: compute-analytics
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
 ---
 # ── CronJob: trigger kmb-fetcher every minute ────────────────────────────────
 apiVersion: batch/v1
@@ -119,7 +157,7 @@ spec:
                 -H "Content-Type: application/json" \
                 -d '{}'
 ---
-# ── CronJob: trigger compute-analytics every hour via OpenFaaS gateway ───────
+# ── CronJob: trigger compute-analytics every hour ────────────────────────────
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -142,7 +180,7 @@ spec:
             - -c
             - |
               curl -sf --max-time 60 -X POST \
-                http://gateway.openfaas.svc.cluster.local:8080/function/compute-analytics \
+                http://compute-analytics.openfaas-fn.svc.cluster.local:8080/ \
                 -H "Content-Type: application/json" \
                 -d '{}'
 ---
@@ -218,36 +256,74 @@ spec:
   type: ClusterIP
 ---
 # ── spark-analytics ──────────────────────────────────────────────────────────
-# Real OpenFaaS Function CRD — scales to zero between daily runs.
-# Gateway receives POST from CronJob, spins up pod, pod submits K8s Spark Job,
-# then pod terminates and scales back to zero.
-# Equivalent to AWS Lambda triggering an EMR/Glue Spark job.
-apiVersion: openfaas.com/v1
-kind: Function
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: spark-analytics
   namespace: openfaas-fn
-spec:
-  name: spark-analytics
-  image: ansonhui123/spark-analytics:latest
   labels:
-    com.openfaas.scale.zero: "true"
-    com.openfaas.scale.zero-duration: "10m"
-  environment:
-    DB_HOST: "postgres-db.hk-bus.svc.cluster.local"
-    DB_PORT: "5432"
-    DB_NAME: "hkbus"
-    DB_USER: "postgres"
-  secrets:
-    - postgres-secret
-  requests:
-    memory: "64Mi"
-    cpu: "50m"
-  limits:
-    memory: "128Mi"
-    cpu: "200m"
+    faas_function: spark-analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: spark-analytics
+  template:
+    metadata:
+      labels:
+        faas_function: spark-analytics
+    spec:
+      serviceAccountName: spark-analytics-sa
+      containers:
+      - name: spark-analytics
+        image: ansonhui123/spark-analytics:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
-# ── CronJob: trigger spark-analytics daily at 2am HKT via OpenFaaS gateway ───
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-analytics
+  namespace: openfaas-fn
+  labels:
+    faas_function: spark-analytics
+spec:
+  selector:
+    faas_function: spark-analytics
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── CronJob: trigger spark-analytics daily at 2am HKT ───────────────────────
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -270,6 +346,294 @@ spec:
             - -c
             - |
               curl -sf --max-time 600 -X POST \
-                http://gateway.openfaas.svc.cluster.local:8080/function/spark-analytics \
+                http://spark-analytics.openfaas-fn.svc.cluster.local:8080/ \
+                -H "Content-Type: application/json" \
+                -d '{}'
+---
+# ── traffic-fetcher ───────────────────────────────────────────────────────────
+# Equivalent: AWS Lambda triggered by CloudWatch Events every 2 minutes
+# Fetches HK smart lamppost speed/volume XML → traffic_speed_volume table
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: traffic-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: traffic-fetcher
+  template:
+    metadata:
+      labels:
+        faas_function: traffic-fetcher
+    spec:
+      containers:
+      - name: traffic-fetcher
+        image: ansonhui123/traffic-fetcher:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "300m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traffic-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: traffic-fetcher
+spec:
+  selector:
+    faas_function: traffic-fetcher
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── accident-fetcher ──────────────────────────────────────────────────────────
+# Equivalent: AWS Lambda triggered by CloudWatch Events daily at 2 AM HKT
+# Downloads Transport Dept accident CSVs → accident_summary table
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accident-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: accident-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: accident-fetcher
+  template:
+    metadata:
+      labels:
+        faas_function: accident-fetcher
+    spec:
+      containers:
+      - name: accident-fetcher
+        image: ansonhui123/accident-fetcher:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: accident-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: accident-fetcher
+spec:
+  selector:
+    faas_function: accident-fetcher
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── passenger-fetcher ─────────────────────────────────────────────────────────
+# Equivalent: AWS Lambda triggered by CloudWatch Events daily at 3 AM HKT
+# Downloads IMMD cross-border passenger CSV → passenger_daily_summary table
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: passenger-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: passenger-fetcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      faas_function: passenger-fetcher
+  template:
+    metadata:
+      labels:
+        faas_function: passenger-fetcher
+    spec:
+      containers:
+      - name: passenger-fetcher
+        image: ansonhui123/passenger-fetcher:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres-db.hk-bus.svc.cluster.local"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "hkbus"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: passenger-fetcher
+  namespace: openfaas-fn
+  labels:
+    faas_function: passenger-fetcher
+spec:
+  selector:
+    faas_function: passenger-fetcher
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ── CronJob: trigger traffic-fetcher every 2 minutes ─────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: traffic-fetcher-cron
+  namespace: hk-bus
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - sh
+            - -c
+            - |
+              curl -sf --max-time 60 -X POST \
+                http://traffic-fetcher.openfaas-fn.svc.cluster.local:8080/ \
+                -H "Content-Type: application/json" \
+                -d '{}'
+---
+# ── CronJob: trigger accident-fetcher daily at 2 AM HKT ──────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: accident-fetcher-cron
+  namespace: hk-bus
+spec:
+  schedule: "0 18 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - sh
+            - -c
+            - |
+              curl -sf --max-time 300 -X POST \
+                http://accident-fetcher.openfaas-fn.svc.cluster.local:8080/ \
+                -H "Content-Type: application/json" \
+                -d '{}'
+---
+# ── CronJob: trigger passenger-fetcher daily at 3 AM HKT ─────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: passenger-fetcher-cron
+  namespace: hk-bus
+spec:
+  schedule: "0 19 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: invoke
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - sh
+            - -c
+            - |
+              curl -sf --max-time 300 -X POST \
+                http://passenger-fetcher.openfaas-fn.svc.cluster.local:8080/ \
                 -H "Content-Type: application/json" \
                 -d '{}'
