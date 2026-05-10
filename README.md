@@ -25,7 +25,7 @@ This project covers two areas:
 | **ElastiCache (Redis)** | **Redis 7** | Stream bus + API response caching |
 | **API Gateway** | **Traefik** (k3s built-in) | Routes `/api/*` and frontend traffic |
 | **ECS / Fargate** | **Kubernetes** (kind / k3s) | Orchestrates all services |
-| **CloudWatch Dashboards** | **Grafana** | 4 dashboards — KMB, MTR, System Health, Spark Analytics |
+| **CloudWatch Dashboards** | **Grafana** | 7 dashboards — KMB, MTR, System Health, Spark Analytics, Accident Insights, Passenger Flow, Traffic (Lamppost) |
 | **EMR / Glue (Spark)** | **PySpark in a K8s Job** | Batch analytics triggered daily by OpenFaaS function |
 
 ---
@@ -69,6 +69,30 @@ This project covers two areas:
 
  PostgreSQL ◄──── hk-bus-api (Express + Redis cache) ◄──── Web App (React)
  PostgreSQL ◄──── Grafana (direct SQL queries)
+
+ HK TD Smart Lamppost XML Feed
+      │
+      ▼
+ OpenFaaS: traffic-fetcher         (CronJob — every 2 min)
+      │  INSERT + DELETE >24h
+      ▼
+ PostgreSQL: traffic_speed_volume
+
+ HK Transport Dept Accident CSVs
+      │
+      ▼
+ OpenFaaS: accident-fetcher        (CronJob — daily 2 AM HKT)
+      │  TRUNCATE + INSERT
+      ▼
+ PostgreSQL: accident_summary
+
+ IMMD Cross-Border Passenger CSV
+      │
+      ▼
+ OpenFaaS: passenger-fetcher       (CronJob — daily 3 AM HKT)
+      │  TRUNCATE + INSERT
+      ▼
+ PostgreSQL: passenger_daily_summary
 ```
 
 ---
@@ -103,6 +127,9 @@ Login at `http://localhost:3001` (local) or `http://<SERVER_IP>:30400` (EC2) —
 | **MTR Overview** | Avg/P95 wait by line, wait trend over time, per-station hourly breakdown |
 | **System Health** | KMB/MTR rows per minute, table sizes, last fetch timestamp, delay events per minute |
 | **Spark Analytics (Batch)** | Avg/P95 wait by hour of day (bar chart), route reliability ranking, worst/best route-hour combinations |
+| **HK Traffic Accident Insights** | Accidents by year/district/severity/road condition, fatal trend, hourly breakdown, wet vs dry day comparison |
+| **HK Cross-Border Passenger Flow** | Total passengers since 2021, holiday surge multiplier, top control points, arrivals vs departures trend |
+| **HK Real-Time Traffic (Lamppost)** | Live speed/volume from Smart Lamppost detectors, congestion by district, avg speed over time |
 
 ---
 
@@ -184,7 +211,10 @@ hk-bus/
 ├── functions/
 │   ├── kmb-fetcher/                       # OpenFaaS fn: KMB API → Redis Stream (Python/Flask)
 │   ├── compute-analytics/                 # OpenFaaS fn: kmb.eta → kmb.analytics (Node/Express)
-│   └── spark-analytics/                   # OpenFaaS fn: submits PySpark K8s Job (Python/Flask)
+│   ├── spark-analytics/                   # OpenFaaS fn: submits PySpark K8s Job (Python/Flask)
+│   ├── traffic-fetcher/                   # OpenFaaS fn: Smart Lamppost XML → traffic_speed_volume (Python)
+│   ├── accident-fetcher/                  # OpenFaaS fn: TD accident CSVs → accident_summary (Python)
+│   └── passenger-fetcher/                 # OpenFaaS fn: IMMD passenger CSV → passenger_daily_summary (Python)
 ├── spark-jobs/
 │   ├── Dockerfile                         # PySpark + PostgreSQL JDBC driver
 │   └── kmb_analysis.py                    # PySpark job: 14.6M ETA records → 3 result tables
@@ -215,6 +245,9 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | `ansonhui123/spark-analytics` | OpenFaaS function — submits Spark K8s Job |
 | `ansonhui123/hk-bus-spark` | PySpark job runner (14.6M record analysis) |
 | `ansonhui123/delay-alerter` | Redis Stream consumer → delay_alerts |
+| `ansonhui123/traffic-fetcher` | OpenFaaS function — Smart Lamppost XML → traffic_speed_volume (every 2 min) |
+| `ansonhui123/accident-fetcher` | OpenFaaS function — TD accident CSVs → accident_summary (daily) |
+| `ansonhui123/passenger-fetcher` | OpenFaaS function — IMMD passenger CSV → passenger_daily_summary (daily) |
 
 ---
 
@@ -229,6 +262,11 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | `spark_route_reliability` | `kmb` | Per-route reliability score (1 - stddev/(avg+1)) |
 | `eta` | `mtr` | Raw MTR ETA records — line, station, direction, wait_minutes |
 | `delay_alerts` | `public` | Delay events written by delay-alerter Redis Stream consumer |
+| `accident_summary` | `public` | Aggregated accident counts by year/district/severity/road condition (daily refresh) |
+| `weather_annual_stats` | `public` | Annual wet/dry day counts used for accident rate normalisation |
+| `passenger_daily_summary` | `public` | Daily cross-border passenger counts by control point and direction (daily refresh) |
+| `traffic_detector_locations` | `public` | Static Smart Lamppost detector locations — district, road, coordinates |
+| `traffic_speed_volume` | `public` | Real-time speed/volume readings from Smart Lamppost detectors (24-hour rolling window) |
 
 ---
 

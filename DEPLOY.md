@@ -24,7 +24,7 @@ This path runs the full stack on your laptop using [kind](https://kind.sigs.k8s.
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url> hk-bus
+git clone https://github.com/Anson-1/hk-bus.git hk-bus
 cd hk-bus
 ```
 
@@ -53,19 +53,25 @@ docker pull ansonhui123/compute-analytics:latest
 docker pull ansonhui123/delay-alerter:latest
 docker pull ansonhui123/spark-analytics:latest
 docker pull ansonhui123/hk-bus-spark:latest
+docker pull ansonhui123/traffic-fetcher:latest
+docker pull ansonhui123/accident-fetcher:latest
+docker pull ansonhui123/passenger-fetcher:latest
 docker pull postgres:15
 docker pull redis:7-alpine
 docker pull grafana/grafana:10.4.0
 docker pull curlimages/curl:latest
 
 # Load into kind cluster
-kind load docker-image ansonhui123/hk-bus-web-app:latest     --name hk-bus
+kind load docker-image ansonhui123/hk-bus-web-app:latest      --name hk-bus
 kind load docker-image ansonhui123/hk-bus-eta-fetcher:latest  --name hk-bus
 kind load docker-image ansonhui123/kmb-fetcher:latest         --name hk-bus
 kind load docker-image ansonhui123/compute-analytics:latest   --name hk-bus
 kind load docker-image ansonhui123/delay-alerter:latest       --name hk-bus
 kind load docker-image ansonhui123/spark-analytics:latest     --name hk-bus
 kind load docker-image ansonhui123/hk-bus-spark:latest        --name hk-bus
+kind load docker-image ansonhui123/traffic-fetcher:latest     --name hk-bus
+kind load docker-image ansonhui123/accident-fetcher:latest    --name hk-bus
+kind load docker-image ansonhui123/passenger-fetcher:latest   --name hk-bus
 kind load docker-image postgres:15                            --name hk-bus
 kind load docker-image redis:7-alpine                         --name hk-bus
 kind load docker-image grafana/grafana:10.4.0                 --name hk-bus
@@ -144,6 +150,9 @@ This deploys:
 - **compute-analytics** — computes avg/P95 wait times from `kmb.eta` every hour
 - **spark-analytics** — triggers the PySpark batch job every day 2 AM HKT
 - **delay-alerter** — Redis Stream consumer → writes delay events to PostgreSQL
+- **traffic-fetcher** — fetches Smart Lamppost speed/volume data every 2 minutes → `traffic_speed_volume`
+- **accident-fetcher** — downloads TD accident CSVs daily → `accident_summary`
+- **passenger-fetcher** — downloads IMMD cross-border passenger CSV daily → `passenger_daily_summary`
 
 ### 6. Load sample data into PostgreSQL
 
@@ -277,7 +286,7 @@ sudo k3s kubectl get nodes
 ### 2. Clone the repository
 
 ```bash
-git clone <repo-url> hk-bus
+git clone https://github.com/Anson-1/hk-bus.git hk-bus
 cd hk-bus
 ```
 
