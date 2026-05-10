@@ -7,19 +7,32 @@
 #   ./run_local.sh dump          # only dump + restore
 #   ./run_local.sh spark         # only run spark (data already local)
 #   ./run_local.sh               # both
+#
+# Set EC2_HOST before running, e.g.:
+#   export EC2_HOST=ubuntu@<YOUR_EC2_IP>
+#   export SSH_KEY=~/.ssh/my-key.pem
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-EC2_HOST="${EC2_HOST:-ubuntu@18.222.228.100}"
+EC2_HOST="${EC2_HOST:-}"        # must be set: e.g. ubuntu@<EC2_IP>
 SSH_KEY="${SSH_KEY:-}"          # e.g. export SSH_KEY=~/.ssh/my-key.pem
 DUMP_FILE="/tmp/kmb_eta_dump.sql"
 
-LOCAL_PG_HOST="host.docker.internal"
 LOCAL_PG_PORT="5432"
 LOCAL_PG_DB="hkbus"
 LOCAL_PG_USER="postgres"
 LOCAL_PG_PASS="postgres"
+
+# --network host works on Linux; on macOS/Windows Docker Desktop it is a no-op
+# so we use host.docker.internal there instead of 127.0.0.1
+if [[ "$(uname -s)" == "Linux" ]]; then
+  SPARK_NETWORK="--network host"
+  LOCAL_PG_HOST="127.0.0.1"
+else
+  SPARK_NETWORK=""
+  LOCAL_PG_HOST="host.docker.internal"
+fi
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10"
 [ -n "$SSH_KEY" ] && SSH_OPTS="$SSH_OPTS -i $SSH_KEY"
@@ -28,9 +41,14 @@ MODE="${1:-all}"
 
 # ── STEP 1: dump from EC2 ────────────────────────────────────
 if [[ "$MODE" == "dump" || "$MODE" == "all" ]]; then
+  if [[ -z "$EC2_HOST" ]]; then
+    echo "ERROR: EC2_HOST is not set. Export it first: export EC2_HOST=ubuntu@<EC2_IP>"
+    exit 1
+  fi
+
   echo "==> Dumping kmb.eta from EC2 ($EC2_HOST)..."
   ssh $SSH_OPTS "$EC2_HOST" \
-    "pg_dump -U postgres -d hkbus -n kmb -t kmb.eta --data-only -F plain" \
+    "docker exec hk-bus-postgres pg_dump -U postgres -d hkbus -t kmb.eta --data-only -F plain" \
     > "$DUMP_FILE"
 
   echo "==> Dump saved to $DUMP_FILE ($(wc -l < "$DUMP_FILE") lines)"
@@ -58,6 +76,8 @@ if [[ "$MODE" == "spark" || "$MODE" == "all" ]]; then
 
   echo "==> Running KMB Spark analysis (local mode)..."
   docker run --rm \
+    $SPARK_NETWORK \
+    --memory=8g \
     -e JDBC_URL="jdbc:postgresql://${LOCAL_PG_HOST}:${LOCAL_PG_PORT}/${LOCAL_PG_DB}" \
     -e DB_USER="$LOCAL_PG_USER" \
     -e DB_PASSWORD="$LOCAL_PG_PASS" \

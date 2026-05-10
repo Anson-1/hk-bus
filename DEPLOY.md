@@ -8,12 +8,22 @@ Step-by-step instructions for deploying the HK Transit Real-Time Tracker locally
 
 | Tool | Version | Install |
 |---|---|---|
-| **Docker Desktop** | 4.x+ | https://www.docker.com/products/docker-desktop — set memory limit to **6 GB+** in Settings → Resources |
-| **kubectl** | 1.28+ | `brew install kubectl` (Mac) or https://kubernetes.io/docs/tasks/tools |
-| **kind** | 0.20+ | `brew install kind` (Mac) or https://kind.sigs.k8s.io/docs/user/quick-start/#installation |
+| **Docker Desktop** | 4.x+ | https://www.docker.com/products/docker-desktop — set memory limit to **8 GB+** in Settings → Resources |
+| **kubectl** | 1.28+ | `brew install kubectl` (Mac) · `winget install Kubernetes.kubectl` (Windows) · https://kubernetes.io/docs/tasks/tools |
+| **kind** | 0.20+ | `brew install kind` (Mac) · `winget install Kubernetes.kind` (Windows) · https://kind.sigs.k8s.io/docs/user/quick-start/#installation |
 | **git** | any | pre-installed on most systems |
 
-> **Docker memory**: The Spark analytics job needs 4 GB of driver memory. In Docker Desktop → Settings → Resources, set Memory to at least **6 GB** before running the Spark job.
+> **Windows (PowerShell) note:** The `base64 -d` command used in step 5 does not exist in PowerShell. Use this instead:
+> ```powershell
+> $PG_PASS = kubectl get secret postgres-secret -n hk-bus -o jsonpath='{.data.password}' | % { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+> kubectl create secret generic postgres-secret `
+>   -n openfaas-fn `
+>   --from-literal=password=$PG_PASS `
+>   --dry-run=client -o yaml | kubectl apply -f -
+> ```
+> Also use `$env:VAR` instead of `${VAR}` for environment variables, and omit trailing `&` for background processes (run each `port-forward` in a separate terminal instead).
+
+> **Docker memory**: The Spark analytics job needs 4 GB of driver memory. In Docker Desktop → Settings → Resources, set Memory to at least **8 GB** before running the Spark job.
 
 ---
 
@@ -356,7 +366,7 @@ The Spark job analyses the raw KMB ETA data and writes results to PostgreSQL. Th
 
 ### Requirements
 
-- Docker Desktop with **6 GB memory** (Settings → Resources → Memory)
+- Docker Desktop with **8 GB memory** (Settings → Resources → Memory)
 - Local postgres running with data (start via `docker compose -f docker-compose.collector.yml up -d postgres`)
 
 ### Run
@@ -364,10 +374,8 @@ The Spark job analyses the raw KMB ETA data and writes results to PostgreSQL. Th
 ```bash
 docker run --rm \
   --network host \
-  --memory=6g \
-  -e DB_HOST=127.0.0.1 \
-  -e DB_PORT=5432 \
-  -e DB_NAME=hkbus \
+  --memory=8g \
+  -e JDBC_URL=jdbc:postgresql://127.0.0.1:5432/hkbus \
   -e DB_USER=postgres \
   -e DB_PASSWORD=postgres \
   ansonhui123/hk-bus-spark:latest
@@ -459,15 +467,13 @@ docker exec -i hk-bus-postgres psql -U postgres -d hkbus < kmb_eta_full.sql
 
 ### 3. Re-run the PySpark job
 
-> Requires Docker Desktop memory set to **6 GB+** (Settings → Resources → Memory).
+> Requires Docker Desktop memory set to **8 GB+** (Settings → Resources → Memory).
 
 ```bash
 docker run --rm \
   --network host \
-  --memory=6g \
-  -e DB_HOST=127.0.0.1 \
-  -e DB_PORT=5432 \
-  -e DB_NAME=hkbus \
+  --memory=8g \
+  -e JDBC_URL=jdbc:postgresql://127.0.0.1:5432/hkbus \
   -e DB_USER=postgres \
   -e DB_PASSWORD=postgres \
   ansonhui123/hk-bus-spark:latest

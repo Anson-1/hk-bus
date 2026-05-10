@@ -196,19 +196,26 @@ hk-bus/
 │   ├── hpa.yaml                           # HPA for hk-bus-api (replaces Auto Scaling)
 │   ├── postgres/
 │   │   ├── postgres.yaml                  # StatefulSet + PVC + init schema
+│   │   ├── init.sql                       # Database schema initialisation
 │   │   └── secret.yaml                    # DB password
 │   ├── backend-api-deployment.yaml        # Web app Deployment + Service
+│   ├── eta-fetcher/
+│   │   ├── Dockerfile
+│   │   ├── deployment.yaml                # Continuous KMB + MTR ETA collector
+│   │   ├── server.js
+│   │   └── generate-data-job.yaml         # One-off data generation job
 │   ├── delay-alerter/
 │   │   ├── Dockerfile
 │   │   └── server.js                      # Redis Stream consumer → delay_alerts
 │   ├── spark/
 │   │   └── rbac.yaml                      # ServiceAccount + Role for Spark job submission
 │   ├── monitoring/
-│   │   └── grafana.yaml                   # Grafana Deployment + 4 dashboard ConfigMaps
+│   │   └── grafana.yaml                   # Grafana Deployment + 7 dashboard ConfigMaps
 │   └── openfaas/
 │       └── functions-deployment.yaml      # kmb-fetcher (Deployment), compute-analytics +
 │                                          # spark-analytics (OpenFaaS Function CRDs), CronJobs
 ├── functions/
+│   ├── stack.yaml                         # OpenFaaS stack definition
 │   ├── kmb-fetcher/                       # OpenFaaS fn: KMB API → Redis Stream (Python/Flask)
 │   ├── compute-analytics/                 # OpenFaaS fn: kmb.eta → kmb.analytics (Node/Express)
 │   ├── spark-analytics/                   # OpenFaaS fn: submits PySpark K8s Job (Python/Flask)
@@ -220,13 +227,29 @@ hk-bus/
 │   └── kmb_analysis.py                    # PySpark job: 14.6M ETA records → 3 result tables
 ├── web-app/
 │   ├── Dockerfile                         # Multi-stage: Vite build + Express serve
-│   ├── backend/server.js                  # Express API — routes, stops, ETA, MTR, analytics
+│   ├── backend/
+│   │   ├── server.js                      # Express API — routes, stops, ETA, MTR, analytics
+│   │   └── package.json
 │   └── frontend/src/
 │       ├── App.jsx
-│       └── components/                    # BusStopView, RouteDetailsView, MtrView
+│       ├── main.jsx
+│       └── components/                    # BusStopView, RouteDetailsView, MtrView, SearchBar, MapDisplay
 ├── monitoring/
-│   └── grafana/dashboard-files/           # Dashboard JSON files (also embedded in grafana.yaml)
+│   ├── grafana/
+│   │   ├── dashboard-files/               # Dashboard JSON files (also embedded in grafana.yaml)
+│   │   ├── dashboards/providers.yaml      # Grafana dashboard provisioning config
+│   │   └── datasources/datasources.yaml   # Grafana datasource provisioning config
+│   └── prometheus/
+│       └── prometheus.yml                 # Prometheus scrape config
+├── scripts/
+│   └── populate-stops.js                  # Seed KMB bus stops into PostgreSQL
+├── init_schema.sql                        # Standalone DB schema (reference copy)
+├── ec2-collector                          # Long-running EC2 data collector script
+├── explore_apis.py                        # API exploration / prototyping script
+├── run_local.sh                           # Local dev helper script
+├── docker-compose.yml                     # Full local stack (all services)
 ├── docker-compose.collector.yml           # Local dev stack for data collection + Spark testing
+├── .env.example                           # Environment variable template
 └── DEPLOY.md                              # Full deployment guide (kind + k3s)
 ```
 
