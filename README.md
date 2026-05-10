@@ -245,9 +245,9 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | `ansonhui123/spark-analytics` | OpenFaaS function — submits Spark K8s Job |
 | `ansonhui123/hk-bus-spark` | PySpark job runner (14.6M record analysis) |
 | `ansonhui123/delay-alerter` | Redis Stream consumer → delay_alerts |
-| `ansonhui123/traffic-fetcher` | OpenFaaS function — Smart Lamppost XML → traffic_speed_volume (every 2 min) |
-| `ansonhui123/accident-fetcher` | OpenFaaS function — TD accident CSVs → accident_summary (daily) |
-| `ansonhui123/passenger-fetcher` | OpenFaaS function — IMMD passenger CSV → passenger_daily_summary (daily) |
+| `heiheivan/traffic-fetcher` | OpenFaaS function — Smart Lamppost XML → traffic_speed_volume (every 2 min) |
+| `heiheivan/accident-fetcher` | OpenFaaS function — TD accident CSVs → accident_summary (daily) |
+| `heiheivan/passenger-fetcher` | OpenFaaS function — IMMD passenger CSV → passenger_daily_summary (daily) |
 
 ---
 

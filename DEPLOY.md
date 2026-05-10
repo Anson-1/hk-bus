@@ -53,9 +53,9 @@ docker pull ansonhui123/compute-analytics:latest
 docker pull ansonhui123/delay-alerter:latest
 docker pull ansonhui123/spark-analytics:latest
 docker pull ansonhui123/hk-bus-spark:latest
-docker pull ansonhui123/traffic-fetcher:latest
-docker pull ansonhui123/accident-fetcher:latest
-docker pull ansonhui123/passenger-fetcher:latest
+docker pull heiheivan/traffic-fetcher:latest
+docker pull heiheivan/accident-fetcher:latest
+docker pull heiheivan/passenger-fetcher:latest
 docker pull postgres:15
 docker pull redis:7-alpine
 docker pull grafana/grafana:10.4.0
@@ -69,9 +69,9 @@ kind load docker-image ansonhui123/compute-analytics:latest   --name hk-bus
 kind load docker-image ansonhui123/delay-alerter:latest       --name hk-bus
 kind load docker-image ansonhui123/spark-analytics:latest     --name hk-bus
 kind load docker-image ansonhui123/hk-bus-spark:latest        --name hk-bus
-kind load docker-image ansonhui123/traffic-fetcher:latest     --name hk-bus
-kind load docker-image ansonhui123/accident-fetcher:latest    --name hk-bus
-kind load docker-image ansonhui123/passenger-fetcher:latest   --name hk-bus
+kind load docker-image heiheivan/traffic-fetcher:latest       --name hk-bus
+kind load docker-image heiheivan/accident-fetcher:latest      --name hk-bus
+kind load docker-image heiheivan/passenger-fetcher:latest     --name hk-bus
 kind load docker-image postgres:15                            --name hk-bus
 kind load docker-image redis:7-alpine                         --name hk-bus
 kind load docker-image grafana/grafana:10.4.0                 --name hk-bus

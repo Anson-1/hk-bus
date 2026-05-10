@@ -372,7 +372,7 @@ spec:
     spec:
       containers:
       - name: traffic-fetcher
-        image: ansonhui123/traffic-fetcher:latest
+        image: heiheivan/traffic-fetcher:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -441,7 +441,7 @@ spec:
     spec:
       containers:
       - name: accident-fetcher
-        image: ansonhui123/accident-fetcher:latest
+        image: heiheivan/accident-fetcher:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -510,7 +510,7 @@ spec:
     spec:
       containers:
       - name: passenger-fetcher
-        image: ansonhui123/passenger-fetcher:latest
+        image: heiheivan/passenger-fetcher:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
