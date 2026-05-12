@@ -56,13 +56,13 @@ kind uses its own containerd runtime and does not share the Docker image cache. 
 
 ```bash
 # Pull all images first
-docker pull ansonhui123/hk-bus-web-app:latest
-docker pull ansonhui123/hk-bus-eta-fetcher:latest
-docker pull ansonhui123/kmb-fetcher:latest
-docker pull ansonhui123/compute-analytics:latest
-docker pull ansonhui123/delay-alerter:latest
-docker pull ansonhui123/spark-analytics:latest
-docker pull ansonhui123/hk-bus-spark:latest
+docker pull heiheivan/hk-bus-web-app:latest
+docker pull heiheivan/hk-bus-eta-fetcher:latest
+docker pull heiheivan/kmb-fetcher:latest
+docker pull heiheivan/compute-analytics:latest
+docker pull heiheivan/delay-alerter:latest
+docker pull heiheivan/spark-analytics:latest
+docker pull heiheivan/hk-bus-spark:latest
 docker pull heiheivan/traffic-fetcher:latest
 docker pull heiheivan/accident-fetcher:latest
 docker pull heiheivan/passenger-fetcher:latest
@@ -72,13 +72,13 @@ docker pull grafana/grafana:10.4.0
 docker pull curlimages/curl:latest
 
 # Load into kind cluster
-kind load docker-image ansonhui123/hk-bus-web-app:latest      --name hk-bus
-kind load docker-image ansonhui123/hk-bus-eta-fetcher:latest  --name hk-bus
-kind load docker-image ansonhui123/kmb-fetcher:latest         --name hk-bus
-kind load docker-image ansonhui123/compute-analytics:latest   --name hk-bus
-kind load docker-image ansonhui123/delay-alerter:latest       --name hk-bus
-kind load docker-image ansonhui123/spark-analytics:latest     --name hk-bus
-kind load docker-image ansonhui123/hk-bus-spark:latest        --name hk-bus
+kind load docker-image heiheivan/hk-bus-web-app:latest      --name hk-bus
+kind load docker-image heiheivan/hk-bus-eta-fetcher:latest  --name hk-bus
+kind load docker-image heiheivan/kmb-fetcher:latest         --name hk-bus
+kind load docker-image heiheivan/compute-analytics:latest   --name hk-bus
+kind load docker-image heiheivan/delay-alerter:latest       --name hk-bus
+kind load docker-image heiheivan/spark-analytics:latest     --name hk-bus
+kind load docker-image heiheivan/hk-bus-spark:latest        --name hk-bus
 kind load docker-image heiheivan/traffic-fetcher:latest       --name hk-bus
 kind load docker-image heiheivan/accident-fetcher:latest      --name hk-bus
 kind load docker-image heiheivan/passenger-fetcher:latest     --name hk-bus
@@ -378,7 +378,7 @@ docker run --rm \
   -e JDBC_URL=jdbc:postgresql://127.0.0.1:5432/hkbus \
   -e DB_USER=postgres \
   -e DB_PASSWORD=postgres \
-  ansonhui123/hk-bus-spark:latest
+  heiheivan/hk-bus-spark:latest
 ```
 
 The job runs for ~5–10 minutes and writes three tables:
@@ -476,7 +476,7 @@ docker run --rm \
   -e JDBC_URL=jdbc:postgresql://127.0.0.1:5432/hkbus \
   -e DB_USER=postgres \
   -e DB_PASSWORD=postgres \
-  ansonhui123/hk-bus-spark:latest
+  heiheivan/hk-bus-spark:latest
 ```
 
 The job takes ~5–10 minutes and overwrites `kmb.spark_analytics`, `kmb.spark_peak_hours`, and `kmb.spark_route_reliability`.

@@ -6,7 +6,7 @@ functions:
   compute-analytics:
     lang: node18
     handler: ./compute-analytics
-    image: ansonhui123/compute-analytics:latest
+    image: heiheivan/compute-analytics:latest
     environment:
       DB_HOST: host.docker.internal
       DB_PORT: "5432"

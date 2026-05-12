@@ -11,7 +11,7 @@ from kubernetes import client, config
 
 app = Flask(__name__)
 
-SPARK_IMAGE     = "ansonhui123/hk-bus-spark:latest"
+SPARK_IMAGE     = "heiheivan/hk-bus-spark:latest"
 JOB_NAMESPACE   = "hk-bus"
 JOB_TTL_SECONDS = 3600   # auto-clean completed jobs after 1h
 

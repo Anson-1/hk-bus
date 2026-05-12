@@ -39,9 +39,9 @@ Full instructions are in **[DEPLOY.md](DEPLOY.md)**. Summary:
 kind create cluster --name hk-bus
 
 # 2. Pre-load images
-docker pull ansonhui123/hk-bus-web-app:latest
+docker pull heiheivan/hk-bus-web-app:latest
 # ... (see DEPLOY.md for full list)
-kind load docker-image ansonhui123/hk-bus-web-app:latest --name hk-bus
+kind load docker-image heiheivan/hk-bus-web-app:latest --name hk-bus
 # ...
 
 # 3. Deploy core infrastructure
@@ -82,15 +82,16 @@ OpenFaaS UI: http://localhost:8888/ui/
 
 | AWS Service | Open-Source Replacement | Role |
 |---|---|---|
-| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `compute-analytics`, `spark-analytics` — always-on Deployments with OpenFaaS gateway routing (scale-to-zero requires Pro) |
-| **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream between fetcher and alerter |
-| **CloudWatch Events** | **Kubernetes CronJob** | Triggers functions on schedule |
-| **RDS (PostgreSQL)** | **PostgreSQL 15** StatefulSet | All ETA records, analytics, alerts |
-| **ElastiCache (Redis)** | **Redis 7** | Stream bus + API response caching |
-| **API Gateway** | **Traefik** (k3s built-in) | Routes `/api/*` and frontend traffic |
-| **ECS / Fargate** | **Kubernetes** (kind / k3s) | Orchestrates all services |
-| **CloudWatch Dashboards** | **Grafana** | 7 dashboards — KMB, MTR, System Health, Spark Analytics, Accident Insights, Passenger Flow, Traffic (Lamppost) |
-| **EMR / Glue (Spark)** | **PySpark in a K8s Job** | Batch analytics triggered daily by OpenFaaS function |
+| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `kmb-fetcher` (every 1 min), `compute-analytics` (hourly), `spark-analytics` (daily 2 AM HKT), `traffic-fetcher` (every 2 min), `accident-fetcher` (daily 2 AM HKT), `passenger-fetcher` (daily 3 AM HKT) |
+| **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream pipes KMB ETA data from `kmb-fetcher` to `delay-alerter` |
+| **Amazon RDS** | **PostgreSQL 15** StatefulSet | Stores all KMB & MTR ETA records, analytics results, delay alerts, traffic, accident, and passenger data |
+| **Amazon ElastiCache** | **Redis 7** | API response caching + message stream bus |
+| **AWS API Gateway** | **Traefik** (k3s built-in) | Routes `/api/*` traffic to backend and serves frontend |
+| **Amazon ECS / Fargate** | **Kubernetes** (kind locally, k3s on EC2) | Orchestrates all services as pods/deployments |
+| **CloudWatch Events** | **Kubernetes CronJob** | Schedules OpenFaaS functions (every 1 min, every 2 min, hourly, daily 2 AM HKT, daily 3 AM HKT) |
+| **CloudWatch Dashboards** | **Grafana** | 7 dashboards — KMB Delay, MTR Overview, System Health, Spark Analytics, Traffic Accident Insights, Cross-Border Passenger Flow, Real-Time Traffic (Lamppost) |
+| **Amazon EMR / AWS Glue** | **PySpark (K8s Job)** | Batch analysis of 84M KMB ETA records → route reliability & peak hours |
+| **Amazon EC2** | **EC2 (kept)** | Always-on data collector running k3s + Docker stack |
 
 ---
 
@@ -111,15 +112,13 @@ OpenFaaS UI: http://localhost:8888/ui/
       ▼
  PostgreSQL: public.delay_alerts
 
- MTR Gov API ──► eta-fetcher ──► PostgreSQL: mtr.eta  (continuous)
+ KMB Gov API ──► eta-fetcher ──► PostgreSQL: kmb.eta  (continuous, every 15s)
+ MTR Gov API ──► eta-fetcher ──► PostgreSQL: mtr.eta  (continuous, every 30s)
 
- PostgreSQL: kmb.eta
-      │
+ OpenFaaS: compute-analytics    (CronJob — every 1 hr, DB cleanup)
+      │  DELETE old rows — rolling windows
       ▼
- OpenFaaS: compute-analytics    (CronJob — every 1 hr)
-      │  UPSERT
-      ▼
- PostgreSQL: kmb.analytics
+ PostgreSQL: kmb.eta (<1h), mtr.eta (<24h), public.delay_alerts (<7d)
 
  OpenFaaS: spark-analytics      (CronJob — every day 2 AM HKT)
       │  submits K8s Job
@@ -236,7 +235,7 @@ hk-bus/
 ├── functions/
 │   ├── stack.yaml                         # OpenFaaS stack definition
 │   ├── kmb-fetcher/                       # OpenFaaS fn: KMB API → Redis Stream (Python/Flask)
-│   ├── compute-analytics/                 # OpenFaaS fn: kmb.eta → kmb.analytics (Node/Express)
+│   ├── compute-analytics/                 # OpenFaaS fn: hourly DB cleanup — rolling windows for kmb.eta, mtr.eta, delay_alerts (Node/Express)
 │   ├── spark-analytics/                   # OpenFaaS fn: submits PySpark K8s Job (Python/Flask)
 │   ├── traffic-fetcher/                   # OpenFaaS fn: Smart Lamppost XML → traffic_speed_volume (Python)
 │   ├── accident-fetcher/                  # OpenFaaS fn: TD accident CSVs → accident_summary (Python)
@@ -280,13 +279,13 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 
 | Image | Description |
 |---|---|
-| `ansonhui123/hk-bus-web-app` | React frontend + Express API |
-| `ansonhui123/hk-bus-eta-fetcher` | Continuous KMB + MTR ETA collector → PostgreSQL |
-| `ansonhui123/kmb-fetcher` | OpenFaaS function — KMB API → Redis Stream |
-| `ansonhui123/compute-analytics` | OpenFaaS function — kmb.eta → kmb.analytics |
-| `ansonhui123/spark-analytics` | OpenFaaS function — submits Spark K8s Job |
-| `ansonhui123/hk-bus-spark` | PySpark job runner (84M raw ETA records, eta_seq=1 analysis) |
-| `ansonhui123/delay-alerter` | Redis Stream consumer → delay_alerts |
+| `heiheivan/hk-bus-web-app` | React frontend + Express API |
+| `heiheivan/hk-bus-eta-fetcher` | Continuous KMB + MTR ETA collector → PostgreSQL |
+| `heiheivan/kmb-fetcher` | OpenFaaS function — KMB API → Redis Stream |
+| `heiheivan/compute-analytics` | OpenFaaS function — hourly DB cleanup (rolling windows) |
+| `heiheivan/spark-analytics` | OpenFaaS function — submits Spark K8s Job |
+| `heiheivan/hk-bus-spark` | PySpark job runner (84M raw ETA records, eta_seq=1 analysis) |
+| `heiheivan/delay-alerter` | Redis Stream consumer → delay_alerts |
 | `heiheivan/traffic-fetcher` | OpenFaaS function — Smart Lamppost XML → traffic_speed_volume (every 2 min) |
 | `heiheivan/accident-fetcher` | OpenFaaS function — TD accident CSVs → accident_summary (daily) |
 | `heiheivan/passenger-fetcher` | OpenFaaS function — IMMD passenger CSV → passenger_daily_summary (daily) |
@@ -320,5 +319,5 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. HPA is configured for `hk-bus-api` only. |
 | **No HTTPS** | TLS termination is not configured in `ingress.yaml`. Suitable for local kind / internal EC2 testing only. |
 | **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
-| **Data scope** | The 14.6 M record dataset used for Spark analytics was collected via a long-running EC2 collector, not the bundled kind cluster. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
+| **Data scope** | The 84M raw KMB ETA records were collected via a long-running EC2 collector. The 14.6M figure refers to the `eta_seq=1` filtered subset used as Spark input. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
 

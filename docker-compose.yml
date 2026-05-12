@@ -46,7 +46,7 @@ services:
   # Replaces: AWS Lambda ingest function + Kinesis producer
   # Mirrors the OpenFaaS kmb-fetcher function used in Kubernetes.
   kmb-fetcher:
-    image: ansonhui123/kmb-fetcher:latest
+    image: heiheivan/kmb-fetcher:latest
     container_name: hk-bus-kmb-fetcher
     environment:
       REDIS_URL: redis://redis:6379
@@ -62,7 +62,7 @@ services:
   # Replaces: AWS Lambda triggered by Kinesis
   # Mirrors the delay-alerter Deployment used in Kubernetes.
   delay-alerter:
-    image: ansonhui123/delay-alerter:latest
+    image: heiheivan/delay-alerter:latest
     container_name: hk-bus-delay-alerter
     environment:
       REDIS_URL: redis://redis:6379

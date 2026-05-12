@@ -36,7 +36,7 @@
       "id": 3, "title": "Avg Wait (last hour)",
       "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT ROUND(AVG(wait_minutes)::numeric, 1) AS value FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
+      "targets": [{ "rawSql": "SELECT ROUND(AVG(wait_minutes)::numeric, 1) AS value FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "fieldConfig": { "defaults": { "unit": "none", "displayName": "Avg Wait (min)", "color": { "mode": "fixed", "fixedColor": "orange" } } }
     },
@@ -69,7 +69,7 @@
       "type": "timeseries", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
       "datasource": { "type": "postgres", "uid": "postgres" },
       "targets": [{
-        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
+        "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '3 hours' GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
         "format": "time_series", "refId": "A"
       }],
       "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }

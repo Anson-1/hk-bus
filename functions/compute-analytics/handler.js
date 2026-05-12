@@ -19,38 +19,6 @@ app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
 app.post('/', async (req, res) => {
   const start = Date.now();
   try {
-    // Ensure analytics table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS kmb.analytics (
-        route            VARCHAR(20),
-        hour_of_day      INTEGER,
-        day_of_week      INTEGER,
-        avg_wait_minutes NUMERIC(6,2),
-        p95_wait_minutes NUMERIC(6,2),
-        computed_at      TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (route, hour_of_day, day_of_week)
-      )
-    `);
-
-    const result = await pool.query(`
-      INSERT INTO kmb.analytics
-        (route, hour_of_day, day_of_week, avg_wait_minutes, p95_wait_minutes)
-      SELECT
-        route,
-        hour_of_day,
-        day_of_week,
-        ROUND(AVG(wait_minutes)::numeric, 2),
-        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY wait_minutes)::numeric, 2)
-      FROM kmb.eta
-      WHERE fetched_at > (NOW() AT TIME ZONE 'Asia/Hong_Kong') - INTERVAL '2 hours'
-        AND wait_minutes IS NOT NULL
-      GROUP BY route, hour_of_day, day_of_week
-      ON CONFLICT (route, hour_of_day, day_of_week) DO UPDATE
-        SET avg_wait_minutes = EXCLUDED.avg_wait_minutes,
-            p95_wait_minutes = EXCLUDED.p95_wait_minutes,
-            computed_at      = NOW()
-    `);
-
     // Delete records older than 1 hour — keeps kmb.eta as a rolling window
     const cleanup = await pool.query(`
       DELETE FROM kmb.eta
@@ -71,7 +39,6 @@ app.post('/', async (req, res) => {
 
     res.json({
       ok: true,
-      rowsAffected: result.rowCount,
       rowsDeleted: cleanup.rowCount,
       mtrRowsDeleted: mtrCleanup.rowCount,
       alertRowsDeleted: alertCleanup.rowCount,

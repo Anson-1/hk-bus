@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: hk-bus-api
-          image: ansonhui123/hk-bus-web-app:latest
+          image: heiheivan/hk-bus-web-app:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000

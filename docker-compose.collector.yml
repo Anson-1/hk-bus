@@ -51,7 +51,7 @@ services:
     restart: unless-stopped
 
   web-app:
-    image: ansonhui123/hk-bus-web-app:latest
+    image: heiheivan/hk-bus-web-app:latest
     container_name: hk-bus-web-app
     environment:
       PORT: 3000

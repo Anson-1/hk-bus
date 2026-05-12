@@ -26,7 +26,7 @@
       "id": 3, "title": "Delay Rate (last hour)",
       "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "postgres", "uid": "postgres" },
-      "targets": [{ "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS value FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
+      "targets": [{ "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS value FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
       "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 5 } ] }, "color": { "mode": "thresholds" } } }
     },
@@ -43,7 +43,7 @@
       "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
       "datasource": { "type": "postgres", "uid": "postgres" },
       "targets": [{
-        "rawSql": "SELECT (DATE_TRUNC('hour', fetched_at) + FLOOR(EXTRACT(MINUTE FROM fetched_at)/5)*INTERVAL '5 minutes') AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS \"Delay %\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '3 hours' GROUP BY 1 ORDER BY 1",
+        "rawSql": "SELECT (DATE_TRUNC('hour', fetched_at) + FLOOR(EXTRACT(MINUTE FROM fetched_at)/5)*INTERVAL '5 minutes') AT TIME ZONE 'Asia/Hong_Kong' AS time, ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS \"Delay %\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '3 hours' GROUP BY 1 ORDER BY 1",
         "format": "time_series", "refId": "A"
       }],
       "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }

@@ -162,34 +162,6 @@ WHERE eta_seq = 1
 GROUP BY hour_of_day, day_of_week
 ORDER BY hour_of_day, day_of_week;
 
--- Materialized view: per-route reliability aggregated across all collected data
--- Used by Grafana for fast dashboard queries — refresh hourly via eta-fetcher
-CREATE MATERIALIZED VIEW IF NOT EXISTS kmb.mv_route_reliability AS
-SELECT
-  route,
-  dir,
-  hour_of_day,
-  day_of_week,
-  COUNT(*)                                            AS sample_count,
-  ROUND(AVG(wait_minutes)::numeric, 1)                AS avg_wait_min,
-  ROUND(PERCENTILE_CONT(0.5)
-        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p50_wait_min,
-  ROUND(PERCENTILE_CONT(0.95)
-        WITHIN GROUP (ORDER BY wait_minutes)::numeric, 1) AS p95_wait_min,
-  ROUND(
-    100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%'
-                      OR remarks = 'Moving slowly'
-                     THEN 1 ELSE 0 END)
-    / NULLIF(COUNT(*), 0), 1)                         AS delay_pct
-FROM kmb.eta
-WHERE eta_seq = 1
-  AND wait_minutes IS NOT NULL
-GROUP BY route, dir, hour_of_day, day_of_week
-WITH NO DATA;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_route_reliability
-  ON kmb.mv_route_reliability (route, dir, hour_of_day, day_of_week);
-
 -- ── MTR ──────────────────────────────────────────────────────
 
 -- Per-line/station hourly wait stats

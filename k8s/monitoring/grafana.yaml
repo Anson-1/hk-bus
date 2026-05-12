@@ -73,7 +73,7 @@ data:
           "id": 3, "title": "Delay Rate (last hour)",
           "type": "stat", "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS value FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS value FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 5 } ] }, "color": { "mode": "thresholds" } } }
         },
@@ -172,7 +172,7 @@ data:
           "id": 3, "title": "Avg Wait (last hour)",
           "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT ROUND(AVG(wait_minutes)::numeric, 1) AS value FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT ROUND(AVG(wait_minutes)::numeric, 1) AS value FROM mtr.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour'", "format": "table", "refId": "A" }],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "none", "displayName": "Avg Wait (min)", "color": { "mode": "fixed", "fixedColor": "orange" } } }
         },
@@ -205,7 +205,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND (fetched_at AT TIME ZONE 'Asia/Hong_Kong') > NOW() - INTERVAL '3 hours' AND ('$line' = 'All' OR line = '$line') GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
+            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, line, ROUND(AVG(wait_minutes)::numeric, 1) AS \"Avg Wait (min)\" FROM mtr.eta WHERE eta_seq = 1 AND (fetched_at AT TIME ZONE 'Asia/Hong_Kong') > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '3 hours' AND ('$line' = 'All' OR line = '$line') GROUP BY DATE_TRUNC('minute', fetched_at), line ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "none", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
@@ -248,7 +248,7 @@ data:
           "id": 1, "title": "KMB Rows (last 15 min)",
           "type": "stat", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM kmb.eta WHERE fetched_at > NOW() - INTERVAL '15 minutes'", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM kmb.eta WHERE fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '15 minutes'", "format": "table", "refId": "A" }],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 10000 }, { "color": "green", "value": 30000 } ] }, "color": { "mode": "thresholds" } } }
         },
@@ -256,7 +256,7 @@ data:
           "id": 2, "title": "MTR Rows (last 30 min)",
           "type": "stat", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM mtr.eta WHERE fetched_at > NOW() - INTERVAL '30 minutes'", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT COUNT(*) AS value FROM mtr.eta WHERE fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '30 minutes'", "format": "table", "refId": "A" }],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 500 }, { "color": "green", "value": 1000 } ] }, "color": { "mode": "thresholds" } } }
         },
@@ -264,7 +264,7 @@ data:
           "id": 3, "title": "Last KMB Fetch",
           "type": "stat", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(fetched_at)))::int AS value FROM kmb.eta", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'Asia/Hong_Kong' - MAX(fetched_at)))::int AS value FROM kmb.eta", "format": "table", "refId": "A" }],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "text": {} },
           "fieldConfig": { "defaults": { "unit": "s", "displayName": "Seconds ago", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 120 } ] }, "color": { "mode": "thresholds" } } }
         },
@@ -281,7 +281,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 0, "y": 4, "w": 16, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM kmb.eta WHERE fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM kmb.eta WHERE fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
@@ -291,7 +291,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 16, "y": 4, "w": 8, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) AS \"Delay Events\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, SUM(CASE WHEN remarks LIKE 'Delayed journey%' OR remarks = 'Moving slowly' THEN 1 ELSE 0 END) AS \"Delay Events\" FROM kmb.eta WHERE eta_seq = 1 AND fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }
@@ -301,7 +301,7 @@ data:
           "type": "timeseries", "gridPos": { "x": 0, "y": 12, "w": 24, "h": 6 },
           "datasource": { "type": "postgres", "uid": "postgres" },
           "targets": [{
-            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM mtr.eta WHERE fetched_at > NOW() - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
+            "rawSql": "SELECT DATE_TRUNC('minute', fetched_at) AT TIME ZONE 'Asia/Hong_Kong' AS time, COUNT(*) AS \"Rows / min\" FROM mtr.eta WHERE fetched_at > NOW() AT TIME ZONE 'Asia/Hong_Kong' - INTERVAL '1 hour' GROUP BY DATE_TRUNC('minute', fetched_at) ORDER BY 1",
             "format": "time_series", "refId": "A"
           }],
           "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" }, "custom": { "lineWidth": 2, "fillOpacity": 15 } } }

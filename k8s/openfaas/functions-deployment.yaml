@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
       - name: kmb-fetcher
-        image: ansonhui123/kmb-fetcher:latest
+        image: heiheivan/kmb-fetcher:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -83,7 +83,7 @@ spec:
     spec:
       containers:
       - name: compute-analytics
-        image: ansonhui123/compute-analytics:latest
+        image: heiheivan/compute-analytics:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -204,7 +204,7 @@ spec:
     spec:
       containers:
       - name: delay-alerter
-        image: ansonhui123/delay-alerter:latest
+        image: heiheivan/delay-alerter:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3004
@@ -276,7 +276,7 @@ spec:
       serviceAccountName: spark-analytics-sa
       containers:
       - name: spark-analytics
-        image: ansonhui123/spark-analytics:latest
+        image: heiheivan/spark-analytics:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080

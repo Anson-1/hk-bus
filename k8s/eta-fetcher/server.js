@@ -390,14 +390,6 @@ async function main() {
   // Refresh route list once per day (routes change very rarely)
   setInterval(loadKMBRoutes, 24 * 3600_000);
 
-  // Refresh materialized reliability view hourly
-  setInterval(async () => {
-    try {
-      await db.query('REFRESH MATERIALIZED VIEW CONCURRENTLY kmb.mv_route_reliability');
-      console.log('[Analytics] mv_route_reliability refreshed');
-    } catch (e) { console.warn('[Analytics] refresh failed:', e.message); }
-  }, 3600_000);
-
   // Cleanup old data once per day
   setInterval(cleanup, 24 * 3600_000);
 
