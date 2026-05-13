@@ -39,8 +39,8 @@ print("[KMB Analysis] Reading kmb.eta from PostgreSQL...")
 ETA_QUERY = (
     "(SELECT * FROM kmb.eta "
     " WHERE eta_seq = 1 AND wait_minutes >= 0"
-    " AND fetched_at >= '2025-05-08 00:00:00'"
-    " AND fetched_at <  '2025-05-09 00:00:00'"
+    " AND fetched_at >= '2026-05-08 00:00:00'"
+    " AND fetched_at <  '2026-05-09 00:00:00'"
     ") AS eta_next"
 )
 

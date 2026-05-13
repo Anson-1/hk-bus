@@ -319,5 +319,5 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. HPA is configured for `hk-bus-api` only. |
 | **No HTTPS** | TLS termination is not configured in `ingress.yaml`. Suitable for local kind / internal EC2 testing only. |
 | **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
-| **Data scope** | The 84M raw KMB ETA records were collected via a long-running EC2 collector. The 14.6M figure refers to the `eta_seq=1` filtered subset used as Spark input. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
+| **Data scope** | The 84M raw KMB ETA records were collected via a long-running EC2 collector. The 24.8M figure refers to the `eta_seq=1` filtered subset used as Spark input. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
 

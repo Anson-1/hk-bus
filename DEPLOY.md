@@ -166,7 +166,7 @@ This deploys:
 
 ### 6. Load sample data into PostgreSQL
 
-The Spark analytics results (pre-computed from 14.6 M ETA records) and MTR data are loaded from the local Docker image of PostgreSQL. Start a local postgres container to extract from:
+The Spark analytics results (pre-computed from 24.8 M ETA records) and MTR data are loaded from the local Docker image of PostgreSQL. Start a local postgres container to extract from:
 
 ```bash
 docker compose -f docker-compose.collector.yml up -d postgres
