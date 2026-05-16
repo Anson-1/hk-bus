@@ -1,3 +1,8 @@
+# Group Member
+- XU Shiyang		(Student ID: 21182227), Contribution: 50%
+- LAM Tai Hei Ivan 	(Student ID: 21202015), Contribution: 50%
+
+
 # HK Transit Real-Time Tracker
 
 A cloud-native transit tracking and analytics system for Hong Kong built as a **full reimplementation of an AWS architecture** using open-source alternatives deployed on Kubernetes. It also includes a **PySpark batch analytics pipeline** over self-collected real-time data.
@@ -321,3 +326,5 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
 | **Data scope** | The 84M raw KMB ETA records were collected via a long-running EC2 collector. The 24.8M figure refers to the `eta_seq=1` filtered subset used as Spark input. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |
 
+## OneDrive Link
+- `https://hkustconnect-my.sharepoint.com/:v:/g/personal/thilam_connect_ust_hk/IQASo4Gs2eDZSKGKeVAjMO2XARPLwi6Xw-TVptKqwi4YVyE?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=UqOlVn`
