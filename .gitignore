@@ -6,6 +6,5 @@ __pycache__/
 venv/
 *.log
 stops.json
-.claude/
 node_modules/
 .env
