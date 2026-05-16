@@ -47,6 +47,24 @@ const stopCache = {};
 const routeSubscribers = {};
 const lastBroadcastData = {};
 
+// Circuit breaker for external KMB/CTB APIs — avoids 5s timeout × N parallel calls
+const kmbCircuit = { failures: 0, lastFailure: 0, open: false };
+function recordKmbFailure() {
+  kmbCircuit.failures++;
+  kmbCircuit.lastFailure = Date.now();
+  if (kmbCircuit.failures >= 3) kmbCircuit.open = true;
+}
+function resetKmbCircuit() {
+  kmbCircuit.failures = 0;
+  kmbCircuit.open = false;
+}
+function kmbApiAvailable() {
+  if (!kmbCircuit.open) return true;
+  // Half-open after 60s — let one request through to test
+  if (Date.now() - kmbCircuit.lastFailure > 60000) { kmbCircuit.open = false; kmbCircuit.failures = 0; return true; }
+  return false;
+}
+
 function broadcastRouteUpdate(routeNum, data) {
   const dataString = JSON.stringify(data);
   if (lastBroadcastData[routeNum] === dataString) return;
@@ -66,23 +84,27 @@ async function getStopDetails(stopId) {
   } catch {}
   if (stopCache[stopId]) return stopCache[stopId];
 
-  try {
-    const response = await axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 5000 });
-    if (response.data && response.data.data) {
-      const s = response.data.data;
-      const result = {
-        stop_id: stopId,
-        name_en: s.name_en || '',
-        name_tc: s.name_tc || '',
-        lat: parseFloat(s.lat),
-        long: parseFloat(s.long),
-      };
-      stopCache[stopId] = result;
-      redis.setex(redisKey, 86400, JSON.stringify(result)).catch(() => {});
-      return result;
+  if (kmbApiAvailable()) {
+    try {
+      const response = await axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 2000 });
+      if (response.data && response.data.data) {
+        const s = response.data.data;
+        const result = {
+          stop_id: stopId,
+          name_en: s.name_en || '',
+          name_tc: s.name_tc || '',
+          lat: parseFloat(s.lat),
+          long: parseFloat(s.long),
+        };
+        stopCache[stopId] = result;
+        redis.setex(redisKey, 86400, JSON.stringify(result)).catch(() => {});
+        resetKmbCircuit();
+        return result;
+      }
+    } catch (error) {
+      recordKmbFailure();
+      console.warn(`Failed to fetch stop details for ${stopId}:`, error.message);
     }
-  } catch (error) {
-    console.warn(`Failed to fetch stop details for ${stopId}:`, error.message);
   }
 
   const fallback = { stop_id: stopId, name_en: `Stop ${stopId.substring(0, 8)}`, name_tc: '' };
@@ -96,24 +118,28 @@ async function getRouteDetails(routeNum, direction = 'O') {
   const cacheKey = `${routeNum}_${direction}`;
   if (routeCache[cacheKey]) return routeCache[cacheKey];
 
-  try {
-    const response = await axios.get(`${KMB_API_BASE}/route`, { params: { routes: routeNum }, timeout: 3000 });
-    if (response.data && response.data.data && response.data.data.length > 0) {
-      const routes = response.data.data;
-      const matchingRoutes = routes.filter(r => r.route === routeNum);
-      let matched = matchingRoutes.find(r => r.bound === direction && r.service_type === '1')
-        || matchingRoutes.find(r => r.bound === direction)
-        || (matchingRoutes.length > 0 ? matchingRoutes[0] : routes[0]);
+  if (kmbApiAvailable()) {
+    try {
+      const response = await axios.get(`${KMB_API_BASE}/route`, { params: { routes: routeNum }, timeout: 2000 });
+      if (response.data && response.data.data && response.data.data.length > 0) {
+        const routes = response.data.data;
+        const matchingRoutes = routes.filter(r => r.route === routeNum);
+        let matched = matchingRoutes.find(r => r.bound === direction && r.service_type === '1')
+          || matchingRoutes.find(r => r.bound === direction)
+          || (matchingRoutes.length > 0 ? matchingRoutes[0] : routes[0]);
 
-      routeCache[cacheKey] = {
-        route: routeNum,
-        name: `${matched.orig_en} → ${matched.dest_en}`,
-        name_tc: `${matched.orig_tc} → ${matched.dest_tc}`,
-      };
-      return routeCache[cacheKey];
+        routeCache[cacheKey] = {
+          route: routeNum,
+          name: `${matched.orig_en} → ${matched.dest_en}`,
+          name_tc: `${matched.orig_tc} → ${matched.dest_tc}`,
+        };
+        resetKmbCircuit();
+        return routeCache[cacheKey];
+      }
+    } catch (e) {
+      recordKmbFailure();
+      console.error(`Error fetching route ${routeNum}:`, e.message);
     }
-  } catch (e) {
-    console.error(`Error fetching route ${routeNum}:`, e.message);
   }
 
   return { route: routeNum, name: `Route ${routeNum}`, name_tc: `路線 ${routeNum}` };
@@ -150,7 +176,7 @@ app.get('/metrics', (req, res) => {
 app.get('/api/stops/:stopId', async (req, res) => {
   try {
     const { stopId } = req.params;
-    const response = await axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 5000 });
+    const response = await axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 2000 });
     if (response.data && response.data.data) {
       const stop = response.data.data;
       res.json({
@@ -174,8 +200,8 @@ app.get('/api/eta/:stopId', async (req, res) => {
     const { stopId } = req.params;
 
     const [stopResponse, etaResponse] = await Promise.allSettled([
-      axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 5000 }),
-      axios.get(`${KMB_API_BASE}/stop-eta/${stopId}`, { timeout: 5000 }),
+      axios.get(`${KMB_API_BASE}/stop/${stopId}`, { timeout: 2000 }),
+      axios.get(`${KMB_API_BASE}/stop-eta/${stopId}`, { timeout: 2000 }),
     ]);
 
     let stopInfo = null;
@@ -254,7 +280,9 @@ app.get('/api/route-search', async (req, res) => {
 
     const searchTerm = q.toUpperCase().trim();
 
-    const kmbRes = await axios.get(`${KMB_API_BASE}/route`, { timeout: 5000 }).catch(() => null);
+    const kmbRes = kmbApiAvailable()
+      ? await axios.get(`${KMB_API_BASE}/route`, { timeout: 2000 }).catch(() => null)
+      : null;
 
     const results = kmbRes?.data?.data
       ? kmbRes.data.data
@@ -340,12 +368,13 @@ app.get('/api/route-live/:routeNum', async (req, res) => {
     const fallbackBound = requestedBound === 'I' ? 'O' : 'I';
 
     try {
-      stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop/${routeNum}/${directionWord}/1`, { timeout: 5000 });
+      stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop/${routeNum}/${directionWord}/1`, { timeout: 2000 });
       direction = requestedBound || 'O';
     } catch (e) {
+      recordKmbFailure();
       if (!requestedBound) {
         try {
-          stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop/${routeNum}/${fallbackWord}/1`, { timeout: 5000 });
+          stopsResponse = await axios.get(`${KMB_API_BASE}/route-stop/${routeNum}/${fallbackWord}/1`, { timeout: 2000 });
           direction = fallbackBound;
         } catch (e2) {
           return res.json({ route: { route: routeNum, name: 'Route not found', name_tc: '路線不存在' }, stops: [] });
@@ -370,16 +399,21 @@ app.get('/api/route-live/:routeNum', async (req, res) => {
 
           let waitSec = null;
           let rmk_en = '';
-          try {
-            const etaResponse = await axios.get(`${KMB_API_BASE}/eta/${stop.stop}/${routeNum}/1`, { timeout: 5000 });
-            if (etaResponse.data?.data?.length > 0) {
-              const firstEta = etaResponse.data.data[0];
-              if (firstEta.eta) {
-                waitSec = Math.max(0, Math.round((new Date(firstEta.eta) - new Date()) / 1000));
-                rmk_en = firstEta.rmk_en || '';
+          if (kmbApiAvailable()) {
+            try {
+              const etaResponse = await axios.get(`${KMB_API_BASE}/eta/${stop.stop}/${routeNum}/1`, { timeout: 2000 });
+              if (etaResponse.data?.data?.length > 0) {
+                const firstEta = etaResponse.data.data[0];
+                if (firstEta.eta) {
+                  waitSec = Math.max(0, Math.round((new Date(firstEta.eta) - new Date()) / 1000));
+                  rmk_en = firstEta.rmk_en || '';
+                }
               }
+              resetKmbCircuit();
+            } catch (etaErr) {
+              recordKmbFailure();
             }
-          } catch (etaErr) {}
+          }
 
           return {
             stop_id: stop.stop,
