@@ -359,11 +359,12 @@ data:
           "id": 5, "title": "Avg & P95 Wait by Hour of Day (all KMB routes)",
           "type": "barchart", "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
           "datasource": { "type": "postgres", "uid": "postgres" },
-          "targets": [{ "rawSql": "SELECT hour_of_day AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\" FROM kmb.spark_peak_hours ORDER BY hour_of_day", "format": "table", "refId": "A" }],
+          "targets": [{ "rawSql": "SELECT LPAD(hour_of_day::TEXT, 2, '0') || ':00' AS \"Hour\", ROUND(avg_wait_minutes::numeric, 1) AS \"Avg Wait (min)\", p95_wait_minutes AS \"P95 Wait (min)\" FROM kmb.spark_peak_hours ORDER BY hour_of_day", "format": "table", "refId": "A" }],
           "options": { "xField": "Hour", "barWidth": 0.6, "groupWidth": 0.7, "legend": { "displayMode": "list", "placement": "bottom" } },
           "fieldConfig": {
             "defaults": { "unit": "none" },
             "overrides": [
+              { "matcher": { "id": "byName", "options": "Hour" }, "properties": [ { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": false, "viz": false } } ] },
               { "matcher": { "id": "byName", "options": "Avg Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] },
               { "matcher": { "id": "byName", "options": "P95 Wait (min)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
             ]
