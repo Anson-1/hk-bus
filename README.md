@@ -1,6 +1,6 @@
 # HK Transit Real-Time Tracker
 
-A cloud-native transit tracking and analytics system for Hong Kong built as a **full reimplementation of an AWS serverless architecture** using open-source alternatives deployed on Kubernetes. It also includes a **PySpark batch analytics pipeline** over self-collected real-time data.
+A cloud-native transit tracking and analytics system for Hong Kong built as a **full reimplementation of an AWS architecture** using open-source alternatives deployed on Kubernetes. It also includes a **PySpark batch analytics pipeline** over self-collected real-time data.
 
 ---
 
@@ -82,7 +82,7 @@ OpenFaaS UI: http://localhost:8888/ui/
 
 | AWS Service | Open-Source Replacement | Role |
 |---|---|---|
-| **AWS Lambda** | **OpenFaaS** (Function CRDs + gateway) | `kmb-fetcher` (every 1 min), `compute-analytics` (hourly), `spark-analytics` (daily 2 AM HKT), `traffic-fetcher` (every 2 min), `accident-fetcher` (daily 2 AM HKT), `passenger-fetcher` (daily 3 AM HKT) |
+| **AWS Lambda** | **OpenFaaS + Kubernetes** (plain Deployments + CronJobs in `openfaas-fn`) | `kmb-fetcher` (every 1 min), `compute-analytics` (hourly), `spark-analytics` (daily 2 AM HKT), `traffic-fetcher` (every 2 min), `accident-fetcher` (daily 2 AM HKT), `passenger-fetcher` (daily 3 AM HKT) |
 | **Amazon Kinesis** | **Redis Streams** | `kmb-eta-raw` stream pipes KMB ETA data from `kmb-fetcher` to `delay-alerter` |
 | **Amazon RDS** | **PostgreSQL 15** StatefulSet | Stores all KMB & MTR ETA records, analytics results, delay alerts, traffic, accident, and passenger data |
 | **Amazon ElastiCache** | **Redis 7** | API response caching + message stream bus |
@@ -90,7 +90,7 @@ OpenFaaS UI: http://localhost:8888/ui/
 | **Amazon ECS / Fargate** | **Kubernetes** (kind locally, k3s on EC2) | Orchestrates all services as pods/deployments |
 | **CloudWatch Events** | **Kubernetes CronJob** | Schedules OpenFaaS functions (every 1 min, every 2 min, hourly, daily 2 AM HKT, daily 3 AM HKT) |
 | **CloudWatch Dashboards** | **Grafana** | 7 dashboards — KMB Delay, MTR Overview, System Health, Spark Analytics, Traffic Accident Insights, Cross-Border Passenger Flow, Real-Time Traffic (Lamppost) |
-| **Amazon EMR / AWS Glue** | **PySpark (K8s Job)** | Batch analysis of 84M KMB ETA records → route reliability & peak hours |
+| **Amazon EMR / AWS Glue** | **PySpark (K8s Job)** | Batch analysis of 24.8M filtered KMB ETA records (eta_seq=1) → route reliability & peak hours |
 | **Amazon EC2** | **EC2 (kept)** | Always-on data collector running k3s + Docker stack |
 
 ---
@@ -173,8 +173,8 @@ The PySpark job runs on 84 million raw KMB ETA records self-collected from the g
 Key findings from the collected data:
 - **Worst hour**: 3–5 AM — very long waits (avg 19–30 min) due to sparse overnight service
 - **Best hours**: 8–13 — peak service, avg wait drops to ~10 min
-- **Most reliable routes**: Airport/cross-harbour express routes (consistent intervals)
-- **Least reliable**: Low-frequency rural routes with high variance
+- **Most reliable routes**: Infrequent suburban routes (e.g. 214P, 234P, 271A) — long average waits (~35–38 min) but low relative variance, giving high consistency scores
+- **Least reliable**: High-frequency urban routes (e.g. route 16, 58X, 31M) — short average waits (4–7 min) but stddev exceeds the mean, scoring zero reliability
 
 Results are visualised in the **Spark Analytics (Batch)** Grafana dashboard.
 
@@ -230,8 +230,8 @@ hk-bus/
 │   ├── monitoring/
 │   │   └── grafana.yaml                   # Grafana Deployment + 7 dashboard ConfigMaps
 │   └── openfaas/
-│       └── functions-deployment.yaml      # kmb-fetcher (Deployment), compute-analytics +
-│                                          # spark-analytics (OpenFaaS Function CRDs), CronJobs
+│       └── functions-deployment.yaml      # All pipeline workers as plain Deployments + Services
+│                                          # and CronJobs that trigger them on schedule
 ├── functions/
 │   ├── stack.yaml                         # OpenFaaS stack definition
 │   ├── kmb-fetcher/                       # OpenFaaS fn: KMB API → Redis Stream (Python/Flask)
@@ -316,7 +316,7 @@ All images are on Docker Hub (multi-arch: linux/amd64 + linux/arm64):
 | Limitation | Detail |
 |---|---|
 | **OpenFaaS scale-to-zero requires Pro** | Functions are deployed as always-on Kubernetes Deployments with OpenFaaS gateway routing, as scale-to-zero requires the commercial OpenFaaS Pro edition. |
-| **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. HPA is configured for `hk-bus-api` only. |
+| **Single-replica services** | All deployments run 1 replica. PostgreSQL has no HA/replica configuration. This is acceptable for a demonstration cluster but not production. An HPA definition for `hk-bus-api` exists in `k8s/hpa.yaml` but must be applied separately with `kubectl apply -f k8s/hpa.yaml`. |
 | **No HTTPS** | TLS termination is not configured in `ingress.yaml`. Suitable for local kind / internal EC2 testing only. |
 | **Grafana credentials hardcoded** | Admin password (`hkbus123`) is set via environment variable in the Grafana deployment. Rotate before any public exposure. |
 | **Data scope** | The 84M raw KMB ETA records were collected via a long-running EC2 collector. The 24.8M figure refers to the `eta_seq=1` filtered subset used as Spark input. A fresh kind deployment starts with an empty database; Spark results are pre-loaded from a dump in DEPLOY.md Step 6. |

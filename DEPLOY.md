@@ -118,7 +118,7 @@ redis-xxx                    1/1     Running   0          60s
 
 ### 5. Deploy OpenFaaS functions and CronJobs
 
-`compute-analytics` and `spark-analytics` are deployed as real OpenFaaS `Function` CRDs — the OpenFaaS gateway manages their lifecycle and scales them to zero when idle.
+The pipeline workers are deployed as plain Kubernetes **Deployments** in the `openfaas-fn` namespace, with **CronJobs** in the same namespace to trigger them on schedule. OpenFaaS provides the gateway and NATS message bus infrastructure.
 
 Install OpenFaaS first:
 
@@ -131,9 +131,6 @@ arkade install openfaas
 
 # Wait for gateway to be ready (~60s)
 kubectl rollout status -n openfaas deploy/gateway
-
-# Enable scale-to-zero (Community Edition)
-kubectl -n openfaas set env deploy/gateway scale_zero=true
 ```
 
 The functions run in a separate namespace `openfaas-fn`. Copy the database secret there:
@@ -256,13 +253,10 @@ kubectl exec -n hk-bus deployment/redis -- redis-cli XLEN kmb-eta-raw
 kubectl exec -n hk-bus postgres-0 -- \
   psql -U postgres -d hkbus -c "SELECT COUNT(*) FROM public.delay_alerts;"
 
-# Invoke compute-analytics manually via OpenFaaS gateway
-curl --noproxy localhost -X POST http://localhost:8888/function/compute-analytics \
-  -H "Content-Type: application/json" -d '{}'
+# Invoke compute-analytics directly (plain Deployment, not an OpenFaaS function)
+kubectl exec -n openfaas-fn deployment/compute-analytics -- \
+  curl -s -X POST http://localhost:3000/
 # → {"ok":true,"rowsAffected":...,"elapsedMs":...}
-
-# List all deployed OpenFaaS functions
-curl --noproxy localhost http://localhost:8888/system/functions | python3 -m json.tool
 ```
 
 ---
