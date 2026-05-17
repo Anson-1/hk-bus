@@ -171,9 +171,9 @@ The PySpark job runs on 84 million raw KMB ETA records self-collected from the g
 
 | Table | Rows | What it computes |
 |---|---|---|
-| `kmb.spark_analytics` | 6,634 | Avg / P95 wait time per route per hour of day |
-| `kmb.spark_peak_hours` | 17 | System-wide avg / P95 wait by hour of day (hours with sufficient data) |
-| `kmb.spark_route_reliability` | 697 | Per-route reliability score: `1 - stddev / (avg + 1)`, clamped ≥ 0 |
+| `kmb.spark_analytics` | 9,997 | Avg / P95 wait time per route per hour of day |
+| `kmb.spark_peak_hours` | 24 | System-wide avg / P95 wait by hour of day (all 24 hours) |
+| `kmb.spark_route_reliability` | 719 | Per-route reliability score: `1 - stddev / (avg + 1)`, clamped ≥ 0 |
 
 Key findings from the collected data:
 - **Worst hour**: 3–5 AM — very long waits (avg 19–30 min) due to sparse overnight service

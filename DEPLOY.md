@@ -210,10 +210,10 @@ Expected:
 ------------+-------------------------+------------
  mtr        | eta                     |     295973
  kmb        | eta                     |     100000
- kmb        | spark_analytics         |       6634
+ kmb        | spark_analytics         |       9997
  public     | delay_alerts            |       ...
- kmb        | spark_route_reliability |        697
- kmb        | spark_peak_hours        |         17
+ kmb        | spark_route_reliability |        719
+ kmb        | spark_peak_hours        |         24
 ```
 
 ### 7. Access the services
@@ -381,9 +381,9 @@ The job runs for ~5–10 minutes and writes three tables:
 
 | Table | Rows | Description |
 |---|---|---|
-| `kmb.spark_analytics` | 6,634 | Avg/P95 wait per route per hour |
-| `kmb.spark_peak_hours` | 17 | System-wide avg/P95 by hour of day (hours with sufficient data) |
-| `kmb.spark_route_reliability` | 697 | Per-route reliability score |
+| `kmb.spark_analytics` | 9,997 | Avg/P95 wait per route per hour |
+| `kmb.spark_peak_hours` | 24 | System-wide avg/P95 by hour of day (all 24 hours) |
+| `kmb.spark_route_reliability` | 719 | Per-route reliability score |
 
 View results in Grafana → **Spark Analytics (Batch)** dashboard.
 
