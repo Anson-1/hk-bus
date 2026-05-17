@@ -98,6 +98,7 @@ kubectl apply -f k8s/redis.yaml
 kubectl apply -f k8s/eta-fetcher/deployment.yaml
 kubectl apply -f k8s/backend-api-deployment.yaml
 kubectl apply -f k8s/monitoring/grafana.yaml
+kubectl apply -f k8s/hpa.yaml
 ```
 
 Wait for core pods to be ready (takes ~60 seconds):
@@ -309,6 +310,7 @@ k apply -f k8s/redis.yaml
 k apply -f k8s/eta-fetcher/deployment.yaml
 k apply -f k8s/backend-api-deployment.yaml
 k apply -f k8s/monitoring/grafana.yaml
+k apply -f k8s/hpa.yaml
 k apply -f k8s/ingress.yaml
 
 # Wait for core pods
