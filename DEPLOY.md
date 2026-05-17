@@ -381,9 +381,9 @@ The job runs for ~5–10 minutes and writes three tables:
 
 | Table | Rows | Description |
 |---|---|---|
-| `kmb.spark_analytics` | ~6,600 | Avg/P95 wait per route per hour |
-| `kmb.spark_peak_hours` | 17 | System-wide avg/P95 by hour of day |
-| `kmb.spark_route_reliability` | ~700 | Per-route reliability score |
+| `kmb.spark_analytics` | 6,634 | Avg/P95 wait per route per hour |
+| `kmb.spark_peak_hours` | 17 | System-wide avg/P95 by hour of day (hours with sufficient data) |
+| `kmb.spark_route_reliability` | 697 | Per-route reliability score |
 
 View results in Grafana → **Spark Analytics (Batch)** dashboard.
 
